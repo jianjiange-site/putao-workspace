@@ -6,6 +6,26 @@ spring:
     name: dating-mobile-gateway
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
+  config:
+    import: "optional:nacos:dating-mobile-gateway-dev.yaml"
+  cloud:
+    nacos:
+      discovery:
+        enabled: true
+        server-addr: ${NACOS_SERVER_ADDR:38.76.188.242:8848}
+        namespace: ${NACOS_NAMESPACE:putao-dating-dev}
+        username: ${NACOS_USERNAME}
+        password: ${NACOS_PASSWORD}
+      config:
+        enabled: true
+        import-check:
+          enabled: true
+        server-addr: ${NACOS_SERVER_ADDR:38.76.188.242:8848}
+        namespace: ${NACOS_NAMESPACE:putao-dating-dev}
+        username: ${NACOS_USERNAME}
+        password: ${NACOS_PASSWORD}
+        file-extension: yaml
+        group: DEFAULT_GROUP
 
 # gRPC Configuration (if needed)
 grpc:
