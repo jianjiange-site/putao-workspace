@@ -1,0 +1,49 @@
+# =============================================================================
+# Dating Workspace root .gitignore
+# Each microservice has its own .gitignore for service-specific paths.
+# This file only handles monorepo-top concerns (IDE / OS / shared caches).
+# =============================================================================
+
+# --- IDE (JetBrains IntelliJ / VSCode / Eclipse / NetBeans) -----------------
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+
+# --- OS ----------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs / temp files -------------------------------------------------------
+*.log
+logs/
+*.tmp
+*.swp
+*.swo
+
+# --- Build outputs at the monorepo top level (services manage their own) ----
+# If you ever run `mvn package` from the workspace root, drop output here.
+build/
+bin/
+
+# --- Python (ai-chat) --------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# --- Local secret / env overrides (NEVER commit secrets) --------------------
+.env
+.env.*
+!.env.*.example
+deploy/.env.deploy
+
+# Some Windows tools drop a desktop.ini inside any folder they touch.
+desktop.ini
