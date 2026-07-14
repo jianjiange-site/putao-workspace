@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package com.dating.common.proto;
+
+option java_multiple_files = true;
+option java_package = "com.dating.common.proto";
+option java_outer_classname = "ResultProto";
+
+// Common result wrapper for all gRPC responses
+message Result {
+  int32 code = 1;
+  string message = 2;
+  bytes data = 3;
+}
+
+// Empty request/response
+message Empty {}
+
+message PageRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message PageResponse {
+  int32 total = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+  int32 total_pages = 4;
+}

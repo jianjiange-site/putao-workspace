@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package com.dating.post.proto;
+
+option java_multiple_files = true;
+option java_package = "com.dating.post.proto";
+option java_outer_classname = "PostProto";
+
+import "common/result.proto";
+
+// Create post request
+message CreatePostRequest {
+  int64 user_id = 1;
+  string content = 2;
+  repeated string image_keys = 3;
+}
+
+// Post response
+message PostResponse {
+  string post_id = 1;
+  int64 user_id = 2;
+  string content = 3;
+  repeated string image_keys = 4;
+  int32 like_count = 5;
+  int32 comment_count = 6;
+  int64 created_at = 7;
+}
+
+// Get feed request
+message GetFeedRequest {
+  int64 user_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+// Get feed response
+message GetFeedResponse {
+  repeated PostResponse posts = 1;
+  int32 total = 2;
+}
+
+// Post service definition
+service PostService {
+  // Create post
+  rpc CreatePost(CreatePostRequest) returns (PostResponse);
+  
+  // Get post by ID
+  rpc GetPost(GetPostRequest) returns (PostResponse);
+  
+  // Get feed
+  rpc GetFeed(GetFeedRequest) returns (GetFeedResponse);
+  
+  // Like post
+  rpc LikePost(LikePostRequest) returns (LikePostResponse);
+}
+
+message GetPostRequest {
+  string post_id = 1;
+}
+
+message LikePostRequest {
+  string post_id = 1;
+  int64 user_id = 2;
+}
+
+message LikePostResponse {
+  int32 like_count = 1;
+}

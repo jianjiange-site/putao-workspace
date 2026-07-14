@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package com.dating.match.proto;
+
+option java_multiple_files = true;
+option java_package = "com.dating.match.proto";
+option java_outer_classname = "MatchProto";
+
+import "common/result.proto";
+
+// Match request
+message MatchRequest {
+  int64 from_user_id = 1;
+  int64 to_user_id = 2;
+  string action = 3; // like, super_like, pass
+}
+
+// Match response
+message MatchResponse {
+  bool is_matched = 1;
+  string match_id = 2;
+}
+
+// Get recommendations request
+message GetRecommendationsRequest {
+  int64 user_id = 1;
+  int32 limit = 2;
+}
+
+// Get recommendations response
+message GetRecommendationsResponse {
+  repeated RecommendedUser users = 1;
+}
+
+message RecommendedUser {
+  int64 user_id = 1;
+  string nickname = 2;
+  string avatar_key = 3;
+  int32 age = 4;
+  string gender = 5;
+  double similarity_score = 6;
+}
+
+// Match service definition
+service MatchService {
+  // Perform match action
+  rpc MatchAction(MatchRequest) returns (MatchResponse);
+  
+  // Get recommended users
+  rpc GetRecommendations(GetRecommendationsRequest) returns (GetRecommendationsResponse);
+}

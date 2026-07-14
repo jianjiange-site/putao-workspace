@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package com.dating.user.proto;
+
+option java_multiple_files = true;
+option java_package = "com.dating.user.proto";
+option java_outer_classname = "UserProto";
+
+import "common/result.proto";
+
+// Get user profile request
+message GetUserProfileRequest {
+  int64 user_id = 1;
+}
+
+// User profile response
+message UserProfileResponse {
+  int64 user_id = 1;
+  string nickname = 2;
+  string avatar_key = 3;
+  string bio = 4;
+  int32 age = 5;
+  string gender = 6;
+  string created_at = 7;
+}
+
+// Update user profile request
+message UpdateUserProfileRequest {
+  int64 user_id = 1;
+  string nickname = 2;
+  string avatar_key = 3;
+  string bio = 4;
+}
+
+// User service definition
+service UserService {
+  // Get user profile
+  rpc GetUserProfile(GetUserProfileRequest) returns (UserProfileResponse);
+  
+  // Update user profile
+  rpc UpdateUserProfile(UpdateUserProfileRequest) returns (UserProfileResponse);
+  
+  // Batch get user profiles
+  rpc BatchGetUserProfiles(BatchGetUserProfilesRequest) returns (BatchGetUserProfilesResponse);
+}
+
+message BatchGetUserProfilesRequest {
+  repeated int64 user_ids = 1;
+}
+
+message BatchGetUserProfilesResponse {
+  repeated UserProfileResponse profiles = 1;
+}

@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package com.dating.payment.proto;
+
+option java_multiple_files = true;
+option java_package = "com.dating.payment.proto";
+option java_outer_classname = "PaymentProto";
+
+import "common/result.proto";
+
+// Get balance request
+message GetBalanceRequest {
+  int64 user_id = 1;
+}
+
+// Get balance response
+message GetBalanceResponse {
+  int64 user_id = 1;
+  int64 coins = 2;
+}
+
+// Purchase coins request
+message PurchaseCoinsRequest {
+  int64 user_id = 1;
+  int32 coin_amount = 2;
+  string payment_method = 3;
+}
+
+// Purchase coins response
+message PurchaseCoinsResponse {
+  string order_id = 1;
+  int64 coins = 2;
+  int64 created_at = 3;
+}
+
+// Payment service definition
+service PaymentService {
+  // Get user balance
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  
+  // Purchase coins
+  rpc PurchaseCoins(PurchaseCoinsRequest) returns (PurchaseCoinsResponse);
+}
