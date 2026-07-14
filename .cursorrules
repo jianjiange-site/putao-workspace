@@ -117,7 +117,7 @@ public UserProfileVO getProfile(Long userId) { ... }
 ## Git 规范
 
 ### 分支
-- `master`：受保护，只接 dev 合入
+- `main`：受保护，只接 dev 合入
 - `dev`：集成主线
 - `<your>/<topic>`：个人特性分支
 
