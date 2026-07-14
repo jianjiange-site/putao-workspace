@@ -1,0 +1,30 @@
+server:
+  port: ${GATEWAY_PORT:8080}
+
+spring:
+  application:
+    name: dating-mobile-gateway
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
+# gRPC Configuration (if needed)
+grpc:
+  server:
+    port: ${GATEWAY_GRPC_PORT:19080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+logging:
+  level:
+    root: INFO

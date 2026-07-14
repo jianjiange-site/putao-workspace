@@ -1,0 +1,45 @@
+server:
+  port: ${USER_SERVICE_PORT:18081}
+
+spring:
+  application:
+    name: dating-user-service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 2
+      connection-init-sql: SET TIME ZONE 'UTC'
+  data:
+    redis:
+      timeout: 3s
+
+grpc:
+  server:
+    port: ${USER_SERVICE_GRPC_PORT:19081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.dating.user.entity
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+logging:
+  level:
+    root: INFO
