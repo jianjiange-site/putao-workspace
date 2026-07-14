@@ -1,0 +1,14 @@
+target/
+*.iml
+.idea/
+.vscode/
+.DS_Store
+.env
+.env.*
+!.env.*.example
+*.local.yml
+logs/
+*.log
+__pycache__/
+*.pyc
+.pytest_cache/

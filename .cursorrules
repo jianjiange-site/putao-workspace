@@ -1,0 +1,211 @@
+# Dating Project Cursor 开发规则
+
+> 基于 student-dev-guide.md 自动生成，vibe-coding 时请严格遵守
+
+---
+
+## 项目概述
+
+- **类型**：约会交友 App 后端（微服务架构）
+- **技术栈**：Java 21 / Spring Boot 3.3.5 / PostgreSQL / Redis / gRPC / Nacos
+- **仓库结构**：monorepo，含 `ai-chat`/`dating-server`/`proto` 三个顶层目录
+
+---
+
+## 技术栈约束
+
+- **DB**：只用 PostgreSQL（TIMESTAMPTZ 字段），禁止 MySQL
+- **缓存**：Redis 7，key 必须带前缀 `putao:<service>:<domain>:<id>`
+- **服务间调用**：只能用 gRPC，禁止 HTTP/Feign/RestTemplate
+- **ORM**：MyBatis-Plus，单表操作，一张 Mapper 只查一张表，禁止 JOIN
+- **配置**：敏感信息放 Nacos，绝不硬编码密码/token/私钥
+
+---
+
+## 目录分层约定
+
+```
+com.dating.<service>/
+├── controller/    # HTTP 入口，只做参数校验 + 调 service
+├── grpc/         # gRPC 服务端实现
+├── service/      # 业务编排，事务边界
+├── manager/      # 数据访问编排，包装多次 mapper + 缓存
+├── mapper/       # MyBatis-Plus Mapper，一张表一个
+├── entity/       # 数据库实体
+├── dto/          # 入参
+├── vo/           # 出参
+├── client/       # 调用其他服务的 gRPC stub
+└── exception/    # 业务异常
+```
+
+**调用方向**：controller/grpc → service → manager → mapper（单向，禁止逆流）
+
+---
+
+## 代码规范
+
+### 命名
+- 类：UpperCamel（例：`UserProfileService`）
+- 方法/变量：lowerCamel（例：`getUserProfile`）
+- 常量：UPPER_SNAKE（例：`MAX_RETRY_COUNT`）
+- DTO 后缀：`Req`/`Resp`/`DTO`，VO 后缀：`VO`
+
+### 注释要求（强制）
+1. **每个方法必须有 Javadoc**：功能描述 + @param + @return + @throws
+2. **函数内每个逻辑块用单行注释划清**（带编号更好）
+
+```java
+/**
+ * 根据 user_id 查询用户档案，命中缓存返回，未命中回源 DB 并回填。
+ *
+ * @param userId 业务主键，必填 > 0
+ * @return 用户档案 VO；不存在时抛 UserNotFoundException
+ * @throws UserNotFoundException 用户不存在或已删除
+ */
+public UserProfileVO getProfile(Long userId) { ... }
+```
+
+### 异常处理
+- 业务异常继承 `BizException(code, message)`
+- 全局 `@RestControllerAdvice` 兜底转 `Result.fail(code, message)`
+- 禁止在 controller 抛 `throw new Exception()`
+
+### 事务
+- `@Transactional(rollbackFor = Exception.class)` 加在 service 方法上
+- 禁止跨服务分布式事务
+
+---
+
+## 时区规则
+
+**全系统统一 UTC**：
+- DB 列用 `TIMESTAMPTZ`，连接 `SET TIME ZONE 'UTC'`
+- JVM `-Duser.timezone=UTC`
+- 代码/SQL 禁止写死 `Asia/Shanghai`
+- 本地时区只在 App 展示层转换
+
+---
+
+## Redis 规范
+
+- **Key 格式**：`putao:<service>:<domain>:<id>`
+  - ✅ `putao:user:profile:1024`
+  - ❌ `user:profile:1024`（没前缀会撞车）
+- **TTL 必须设置**：禁止永久 key
+- **缓存策略**：cache aside（先写库，再删缓存）
+- **禁止 FLUSHDB/FLUSHALL**
+
+---
+
+## 对象存储（MinIO）
+
+- **Endpoint**：`https://minio-api.jianjiange.site`
+- **必须配置**：`path-style-access: true`
+- **Object Key 格式**：`<category>/<owner_id>/<yyyymm>/<uuid>.<ext>`
+- **出参**：VO 只回 `*_key`，让 App 自拼 URL
+
+---
+
+## gRPC 规范
+
+- `.proto` 文件在 workspace 根的 `proto/` 目录
+- 包坐标必须带putao前缀：`com.dating.<name>.proto:*`
+- 改了 proto 必须：1) 升版本号 2) 重新 deploy 到 Nexus 3) 依赖方同步升级
+
+---
+
+## Git 规范
+
+### 分支
+- `master`：受保护，只接 dev 合入
+- `dev`：集成主线
+- `<your>/<topic>`：个人特性分支
+
+### Commit Message（Conventional Commits）
+```
+<type>(<service>): <概要>
+feat(im-service): 支持 LiveKit Token 短 TTL 重签
+fix(payment-service): 修复金币消费幂等 key 与并发的竞争
+```
+
+### 类型
+- `feat`：新功能
+- `fix`：bug 修复
+- `refactor`：重构
+- `docs`：文档
+- `chore`：构建/CI/依赖
+
+---
+
+## 红线（违反一票否决）
+
+1. ❌ 持久层出现多表 JOIN
+2. ❌ 跨服务直连别人家的库表/Redis/对象桶
+3. ❌ 服务间用 HTTP/Feign/RestTemplate 代替 gRPC
+4. ❌ 真实密码/token/私钥进 git
+5. ❌ DB 列用 `TIMESTAMP`（无时区）或代码写死 `Asia/Shanghai`
+6. ❌ 业务服务自建 WebSocket 或绕开 im-service 调 OpenIM
+7. ❌ 跨服务分布式事务
+8. ❌ controller 直接调 mapper
+9. ❌ 对外 API 暴露内部自增 `id`（应用业务主键 `<entity>_id`）
+10. ❌ 把 Redis 当数据库
+
+---
+
+## 本地开发
+
+- 构建命令：`mvn -B -ntp clean package`
+- 启动配置：`SPRING_PROFILES_ACTIVE=dev`
+- 敏感配置：从环境变量读，不硬编码
+
+---
+
+## Vibe-Coding 文档组织规范
+
+### 目录结构
+
+```
+doc/
+├── README.md           # 文档总览（入口）
+├── specs/              # 原始需求/设计文档
+│   ├── post-service-design.md
+│   └── user-service-design.md
+├── plans/              # 实现计划（vibe-coding 前生成）
+│   └── YYYY-MM-DD-<service>-<phase>.md
+├── progress/           # 进度日志（session 后追加）
+│   └── <service>-log.md
+└── generated/          # AI 生成的辅助文档
+    └── <service>-api.md
+```
+
+### Session 开始前
+
+1. 如果是第一次做某个服务，先创建 `doc/plans/YYYY-MM-DD-<service>-p1.md`
+2. 在 plan 中明确：本轮要实现哪些模块、优先级、预期产出
+
+### Session 结束后
+
+在 `doc/progress/<service>-log.md` 追加本轮内容：
+
+```markdown
+## 2026-07-14 (Session #1)
+
+**目标**: 完成基础骨架 + proto 定义
+
+**完成**:
+- [x] 复制 example-service → post-service
+- [x] 定义 9 个 RPC 接口
+
+**遗留**:
+- [ ] Nacos 配置还未填写密码
+
+**AI 行为备注**:
+- AI 把 getFriendUserIds 误实现成了同步调用，需要改成带超时和降级的版本
+```
+
+### 关键原则
+
+1. **设计文档一次写好，后续只记录偏差**（不要反复改设计文档）
+2. **进度日志追加式更新**，不要每次创建新文件
+3. **主设计文档（specs/）是 source of truth**，generated/ 目录只是辅助
+4. **每次 session 开始时，先读 progress/<service>-log.md 了解上下文**
