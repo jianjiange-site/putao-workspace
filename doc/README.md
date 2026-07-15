@@ -11,7 +11,8 @@ doc/
 │   └── post-service-design.md
 ├── plans/              # 实现计划（vibe-coding 前生成）
 └── progress/           # 进度日志（session 后追加）
-    └── post-service-log.md
+    ├── post-service-log.md
+    └── infra-bootstrap-log.md
 ```
 
 ## 当前进度
@@ -19,6 +20,7 @@ doc/
 | 服务 | 状态 | 文档 |
 |------|------|------|
 | post-service | 规划中 | [设计文档](./specs/post-service-design.md) |
+| 基建（脚手架 / proto / 凭据） | 进行中 | [日志](./progress/infra-bootstrap-log.md) |
 
 ## 使用指南
 
