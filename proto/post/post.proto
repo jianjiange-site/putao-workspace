@@ -8,61 +8,170 @@ option java_outer_classname = "PostProto";
 
 import "common/result.proto";
 
-// Create post request
-message CreatePostRequest {
-  int64 user_id = 1;
-  string content = 2;
-  repeated string image_keys = 3;
+// ========== Common ==========
+
+message BaseResponse {
+  int32 code = 1;
+  string message = 2;
+  string extra = 3;
 }
 
-// Post response
-message PostResponse {
-  string post_id = 1;
+// ========== Create Post ==========
+
+message CreatePostRequest {
+  string content = 1;
+  repeated string image_keys = 2;
+}
+
+message CreatePostResponse {
+  int64 post_id = 1;
+}
+
+// ========== Get Post Detail ==========
+
+message GetPostDetailRequest {
+  int64 post_id = 1;
+}
+
+message PostDetailResponse {
+  int64 post_id = 1;
   int64 user_id = 2;
   string content = 3;
   repeated string image_keys = 4;
   int32 like_count = 5;
   int32 comment_count = 6;
-  int64 created_at = 7;
+  bool is_liked = 7;
+  int64 created_at = 8;
 }
 
-// Get feed request
-message GetFeedRequest {
+// ========== List User Posts ==========
+
+message ListUserPostsRequest {
   int64 user_id = 1;
-  int32 page = 2;
-  int32 page_size = 3;
+  int32 page_size = 2;
+  int64 cursor = 3; // post_id 作为游标
 }
 
-// Get feed response
-message GetFeedResponse {
-  repeated PostResponse posts = 1;
-  int32 total = 2;
+message ListUserPostsResponse {
+  repeated PostDetailResponse items = 1;
+  int64 next_cursor = 2;
+  bool has_more = 3;
 }
 
-// Post service definition
+// ========== Action Like ==========
+
+enum LikeAction {
+  LIKE = 0;
+  UNLIKE = 1;
+}
+
+message ActionLikeRequest {
+  int64 post_id = 1;
+  LikeAction action = 2;
+}
+
+message ActionLikeResponse {
+  bool success = 1;
+}
+
+// ========== Create Comment ==========
+
+message CreateCommentRequest {
+  int64 post_id = 1;
+  string content = 2;
+  int64 root_id = 3;
+  int64 parent_id = 4;
+}
+
+message CreateCommentResponse {
+  int64 comment_id = 1;
+}
+
+// ========== List Comments ==========
+
+message ListCommentsRequest {
+  int64 post_id = 1;
+  int32 page_size = 2;
+  int64 cursor = 3; // comment_id 作为游标
+}
+
+message CommentResponse {
+  int64 comment_id = 1;
+  int64 post_id = 2;
+  int64 user_id = 3;
+  int64 root_id = 4;
+  int64 parent_id = 5;
+  int64 reply_to_user_id = 6;
+  string content = 7;
+  int64 created_at = 8;
+}
+
+message ListCommentsResponse {
+  repeated CommentResponse comments = 1;
+  int64 next_cursor = 2;
+  bool has_more = 3;
+}
+
+// ========== Delete Comment ==========
+
+message DeleteCommentRequest {
+  int64 comment_id = 1;
+}
+
+message DeleteCommentResponse {
+  bool success = 1;
+}
+
+// ========== Delete Post ==========
+
+message DeletePostRequest {
+  int64 post_id = 1;
+}
+
+message DeletePostResponse {
+  bool success = 1;
+}
+
+// ========== Get Recommend Feed ==========
+
+message GetRecommendFeedRequest {
+  int32 page_size = 1;
+  string cursor = 2; // 格式: "recOffset:csOffset"
+}
+
+message GetRecommendFeedResponse {
+  repeated PostDetailResponse items = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+}
+
+// ========== Post Service Definition ==========
+
 service PostService {
-  // Create post
-  rpc CreatePost(CreatePostRequest) returns (PostResponse);
-  
-  // Get post by ID
-  rpc GetPost(GetPostRequest) returns (PostResponse);
-  
-  // Get feed
-  rpc GetFeed(GetFeedRequest) returns (GetFeedResponse);
-  
-  // Like post
-  rpc LikePost(LikePostRequest) returns (LikePostResponse);
-}
+  // 发帖
+  rpc CreatePost(CreatePostRequest) returns (CreatePostResponse);
 
-message GetPostRequest {
-  string post_id = 1;
-}
+  // 获取帖子详情
+  rpc GetPostDetail(GetPostDetailRequest) returns (PostDetailResponse);
 
-message LikePostRequest {
-  string post_id = 1;
-  int64 user_id = 2;
-}
+  // 获取用户帖子列表
+  rpc ListUserPosts(ListUserPostsRequest) returns (ListUserPostsResponse);
 
-message LikePostResponse {
-  int32 like_count = 1;
+  // 点赞/取消点赞
+  rpc ActionLike(ActionLikeRequest) returns (ActionLikeResponse);
+
+  // 创建评论
+  rpc CreateComment(CreateCommentRequest) returns (CreateCommentResponse);
+
+  // 获取评论列表
+  rpc ListComments(ListCommentsRequest) returns (ListCommentsResponse);
+
+  // 删除评论
+  rpc DeleteComment(DeleteCommentRequest) returns (DeleteCommentResponse);
+
+  // 删除帖子
+  rpc DeletePost(DeletePostRequest) returns (DeletePostResponse);
+
+  // 获取推荐 Feed
+  rpc GetRecommendFeed(GetRecommendFeedRequest) returns (GetRecommendFeedResponse);
 }
