@@ -13,14 +13,14 @@
 |---|---|
 | 服务名 | `post-service`(Java 包 `com.dating.post`) |
 | 端口 | HTTP `8080` / gRPC `9090`(本机不冲突即可) |
-| Proto 坐标 | `com.dating.<name>.proto:post-proto:0.1.0`(发到共享 Nexus,见 `student-dev-guide §6.5`) |
-| PG 库 | 共享 `dating_dev_<name>`,本服务 5 张表加 Flyway history `flyway_history_post` |
-| Redis key 前缀 | `<name>:post:*` / `<name>:user:timeline:*` / `<name>:feed:*` / `<name>:lock:post:*` |
-| MinIO bucket | `dating-<name>`(全 workspace 共用一个,本服务图片走 `post-image/` 前缀) |
-| Nacos namespace | `dev-<name>`(配置 + 注册同 namespace) |
+| Proto 坐标 | `com.dating.putao.proto:post-proto:0.1.0`(发到共享 Nexus,见 `student-dev-guide §6.5`) |
+| PG 库 | 共享 `dating_dev_putao`,本服务 5 张表加 Flyway history `flyway_history_post` |
+| Redis key 前缀 | `putao:post:*` / `putao:user:timeline:*` / `putao:feed:*` / `putao:lock:post:*` |
+| MinIO bucket | `dating-putao`(全 workspace 共用一个,本服务图片走 `post-image/` 前缀) |
+| Nacos namespace | `dev-putao`(配置 + 注册同 namespace) |
 | 调用方 | `mobile-gateway`(REST→gRPC 转发) |
 | 依赖方 | `user-service`(取好友列表 + 性别,gRPC + Nacos discovery) |
-| MQ | RocketMQ(仅 fanout,topic `youjianxin-dating-dev-post-fanout-v1`);计数刷盘仍走 Redis + `@Scheduled` |
+| MQ | RocketMQ(仅 fanout,topic `putao-dating-dev-post-fanout-v1`);计数刷盘仍走 Redis + `@Scheduled` |
 
 ---
 
@@ -66,19 +66,19 @@ UGC 内容服务,管三件事:
       ▼             ▼                ▼                                 │
   PostgreSQL    Redis 7         UserClient ─── gRPC (Nacos) ───────────┘
   共享 dev      共享 dev         调 user-service 取
-  库=dating_    前缀=<name>:     - getFriendUserIds
+  库=dating_dev_putao    前缀=putao:     - getFriendUserIds
   dev_<name>                    - getGenderByUserId (批量)
                                 
    ┌─────────────────────────┐
    │ MinIO(共享 dev)         │ App presigned PUT 直传图片
-   │ bucket=dating-<name>    │ post-service 只存 image_key
+   │ bucket=dating-putao    │ post-service 只存 image_key
    │ key=post-image/{uid}/.. │
    └─────────────────────────┘
 ```
 
 - 公网入口只有 `mobile-gateway`;`post-service` 自身不暴露公网,只提供 gRPC,本机调试用 `grpcurl`。
 - 计数刷盘走 Redis Set + `@Scheduled`(见 §6.2 写合并),不进 MQ。
-- 写扩散经 RocketMQ topic `youjianxin-dating-dev-post-fanout-v1` 解耦,Consumer 同进程内消费(见 §10.2.2)。
+- 写扩散经 RocketMQ topic `putao-dating-dev-post-fanout-v1` 解耦,Consumer 同进程内消费(见 §10.2.2)。
 - 不自建 WebSocket;若后续要做「点赞了你的帖子」推送,经 `im-service` 下发系统消息(红线 6)。
 
 部署:本机 Jenkins 一条流水线 `mvn clean package` → `docker build` → `docker compose up -d`,容器跑在本机 docker 网络 `dating-app` 里,中间件全部连远端 `38.76.188.242`(见 `student-dev-guide §4 / §9.1`)。
@@ -96,15 +96,14 @@ UGC 内容服务,管三件事:
 | ORM | MyBatis-Plus 3.5.9 | 单表 CRUD 走 BaseMapper / LambdaQueryWrapper;**禁多表 JOIN**(红线 1) |
 | DB | PostgreSQL 16 | 列统一 `TIMESTAMPTZ`,连接 `SET TIME ZONE 'UTC'`(红线 8) |
 | 迁移 | Flyway 10 | 本服务自己的 history 表 `flyway_history_post` |
-| 缓存 | Redis 7 | key 前缀 `<name>:`(见 `student-dev-guide §6.2`) |
-| 分布式锁 | Redisson | 锁 key 前缀 `<name>:lock:post:*` |
+| 缓存 | Redis 7 | key 前缀 `putao:`(见 `.cursorrules` Redis 规范) |
+| 分布式锁 | Redisson | 锁 key 前缀 `putao:lock:post:*` |
 | 定时任务多实例互斥 | ShedLock(JDBC Provider,共用 PG `shedlock` 表)| 本机单实例可不接,部署多实例必须 |
-| 对象存储 | MinIO,`dating-common` 的 `ObjectStorage` 接口 | bucket `dating-<name>`,`path-style-access: true`(`student-dev-guide §6.3`) |
-| 配置 / 注册 | Nacos 2.4 | namespace `dev-<name>` |
+| 对象存储 | MinIO,`dating-common` 的 `ObjectStorage` 接口 | bucket `dating-putao`,`path-style-access: true`(`student-dev-guide §6.3`) |
+| 配置 / 注册 | Nacos 2.4 | namespace `dev-putao` |
 | gRPC | grpc 1.68.1 + protobuf 4.28.3 + `net.devh:grpc-server-spring-boot-starter:3.1.0.RELEASE` | 服务发现 `discovery:///user-service` |
-| MQ | RocketMQ + `rocketmq-spring-boot-starter`(与 Spring Boot 3.3 兼容版本)| **仅 fanout 场景**;topic / group 必带 `youjianxin-dating-dev-` 前缀(CLAUDE.md 隔离前缀) |
-| Proto 依赖 | Nexus `com.dating.<name>.proto:post-proto:0.1.0` | 同版本号只能发一次 |
-| 序列化 | `protobuf-java-util` | REST 出参直接序列化 proto message |
+| MQ | RocketMQ + `rocketmq-spring-boot-starter`(与 Spring Boot 3.3 兼容版本)| **仅 fanout 场景**;topic / group 必带 `putao-dating-dev-` 前缀(`.cursorrules` 隔离前缀) |
+| Proto 依赖 | Nexus `com.dating.putao.proto:post-proto:0.1.0` | 同版本号只能发一次 |
 
 > ⚠️ RocketMQ 已是基础组件清单成员,本服务用法**仅限 fanout 场景**(见 §10.2.2),其他场景(计数刷盘等)仍走 Redis。清单外的中间件(ES / Mongo / ZK 等)仍需 PR 评审。
 
@@ -112,7 +111,7 @@ UGC 内容服务,管三件事:
 
 ## 4. 包结构
 
-照 `student-dev-guide §5` 模板,这里给本服务实际类布局:
+照 `student-dev-guide §5` 模板,本服务实际类布局(已按本服务特性裁剪 `controller/`):
 
 ```
 com.dating.post
@@ -124,7 +123,8 @@ com.dating.post
 │   ├── PostReadService             # 详情 / 用户帖子列表
 │   ├── LikeService                 # 点赞 upsert + Redis 增量
 │   ├── CommentService              # 评论 增 / 删 / 列
-│   └── FeedService                 # 池重建 + 三路混合读
+│   ├── FeedService                 # 池重建 + 三路混合读
+│   └── impl/                       # @Service 实现 + @Transactional 边界
 ├── mq/
 │   ├── producer/
 │   │   └── PostFanoutProducer      # 发帖事务后 syncSend 到 fanout topic
@@ -140,7 +140,9 @@ com.dating.post
 │   ├── PostLikeManager             # post_like upsert
 │   └── PostCommentManager
 ├── mapper/                         # 一张表一个 Mapper
+├── dto/                             # 入参 DTO（与 proto message 解耦）
 ├── entity/                         # 表 1:1
+├── vo/                             # 出参 VO(gRPC 业务 message 也按 VO 风格构造)
 ├── client/
 │   └── UserClient                  # 调 user-service gRPC stub
 ├── config/
@@ -151,6 +153,19 @@ com.dating.post
 ├── constant/                       # PostStatus / LikeStatus / ErrorCode
 └── exception/                      # BizException + GlobalExceptionHandler
 ```
+
+> **与 `student-dev-guide §5` 的偏差**(本服务特定裁剪,不影响其他服务):
+>
+> 1. **无 `controller/` 子包**。post-service 仅暴露 gRPC(见 §1),
+>    HTTP 入口统一由 `mobile-gateway` 负责,本服务内不引入 REST 端点。
+>    学员复制 `example-service` 骨架后记得删掉 `controller/` 目录。
+> 2. **`dto/` / `vo/` 仍按顶层布局**(`com.dating.post.dto.*` / `com.dating.post.vo.*`),
+>    不因"无 controller 转换层"就聚拢到 `service/` 下。包内再按业务域分目录,
+>    如 `dto/post/CreatePostReq.java` / `vo/feed/FeedItemVO.java`。
+> 3. **`service/` 下加 `impl/` 子包**,遵守 `student-dev-guide §5`。
+>    是否进一步做 "interface 在 `service/` + 实现类在 `service/impl/`" 的分离,
+>    按 Day 1 复制 example-service 骨架后的实际形态落地;本服务不强加额外约束,
+>    `service/PostWriteService.java` 直接 `@Service` 也是合法写法。
 
 调用方向严格单向:`grpc → service → manager → mapper`,`job → service / manager`,`mq.consumer → service / manager`(红线 10)。
 
@@ -228,7 +243,7 @@ com.dating.post
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `id`               | `bigserial PK` | 内部 |
-| `comment_id`       | `BIGINT UNIQUE NOT NULL` | 业务主键 = `id`(简单库可让两者等值),对外暴露 |
+| `comment_id`       | `BIGINT UNIQUE NOT NULL` | 雪花 ID,独立于内部自增 `id`,对外暴露的业务主键 |
 | `post_id`          | `BIGINT NOT NULL` | |
 | `user_id`          | `BIGINT NOT NULL` | |
 | `root_id`          | `BIGINT DEFAULT 0` | 根评论 ID(自身是根则为 0) |
@@ -264,23 +279,23 @@ spring:
 
 ## 6. Redis 缓存设计
 
-**全表 key 必须带 `<name>:` 前缀**,通过 `application-dev.yml` 的 `app.cache.key-prefix` 统一注入,业务代码用变量拼,不要散落硬编码(`student-dev-guide §6.2`)。
+**全表 key 必须带 `putao:` 前缀**,通过 `application-dev.yml` 的 `app.cache.key-prefix` 统一注入,业务代码用变量拼,不要散落硬编码(`.cursorrules` Redis 规范)。
 
 ### 6.1 Key 全表
 
 | Key Pattern | 类型 | TTL | 用途 |
 |---|---|---|---|
-| `<name>:post:detail:{post_id}` | Hash | 7d | 帖子详情(content + imageKeys + createdAt) |
-| `<name>:post:stat:incr:{post_id}:likes` | String(Int) | 7d | 点赞未刷盘增量,正负皆可 |
-| `<name>:post:stat:incr:{post_id}:comments` | String(Int) | 7d | 评论未刷盘增量 |
-| `<name>:post:comments:{post_id}` | ZSet(score=comment_id) | 7d | 最新 200 条评论 |
-| `<name>:post:updated_set` | Set | 7d | 待刷盘的 post_id 集合 |
-| `<name>:user:timeline:{user_id}` | ZSet(score=epoch_s,最多 100 条) | 7d | 关注者时间线(写扩散) |
-| `<name>:feed:pool:recommend:male` | ZSet(score=综合分,前 3000)| 7d | 男性用户看到的池(里面是女性发的帖)|
-| `<name>:feed:pool:recommend:female` | ZSet | 7d | 同理,反性别 |
-| `<name>:feed:cold_start:pool:male` | ZSet(score=epoch_s) | 7d | 男看的冷启动池 |
-| `<name>:feed:cold_start:pool:female` | ZSet | 7d | |
-| `<name>:user:read:bloom:{user_id}` | Redisson BloomFilter(容量 5000,误判 1%)| 7d | 已读去重 |
+| `putao:post:detail:{post_id}` | Hash | 7d | 帖子详情(content + imageKeys + createdAt) |
+| `putao:post:stat:incr:{post_id}:likes` | String(Int) | 7d | 点赞未刷盘增量,正负皆可 |
+| `putao:post:stat:incr:{post_id}:comments` | String(Int) | 7d | 评论未刷盘增量 |
+| `putao:post:comments:{post_id}` | ZSet(score=comment_id) | 7d | 最新 200 条评论 |
+| `putao:post:updated_set` | Set | 7d | 待刷盘的 post_id 集合 |
+| `putao:user:timeline:{user_id}` | ZSet(score=epoch_s,最多 100 条) | 7d | 关注者时间线(写扩散) |
+| `putao:feed:pool:recommend:male` | ZSet(score=综合分,前 3000)| 7d | 给男性用户看的推荐池,装的是女性作者发的帖(异性优先)|
+| `putao:feed:pool:recommend:female` | ZSet(score=综合分,前 3000)| 7d | 给女性用户看的推荐池,装的是男性作者发的帖(异性优先) |
+| `putao:feed:cold_start:pool:male` | ZSet(score=epoch_s) | 7d | 给男性用户看的冷启动池,装的是女性作者新帖 |
+| `putao:feed:cold_start:pool:female` | ZSet(score=epoch_s) | 7d | 给女性用户看的冷启动池,装的是男性作者新帖 |
+| `putao:user:read:bloom:{user_id}` | Redisson BloomFilter(容量 5000,误判 1%)| 7d | 已读去重 |
 
 > ⚠️ 还有一张 `shedlock` 表(PG 不在本表),由 ShedLock 库管理,用于多实例部署时 `LikeFlushJob` / `CommentFlushJob` / `FeedScoreJob` 互斥。它**不是 Redis key**,本机单实例开发可以不接;部署多实例前必须接(否则 Job 重复跑浪费 PG 资源)。原理见 §6.5。
 
@@ -321,8 +336,8 @@ UPDATE post_stats SET like_count = like_count + 1 WHERE post_id = 999;
 
 ```
 1. post_likes 表 upsert(用户级幂等记录,每个 (user_id, post_id) 一行,不存在锁竞争)
-2. INCR <name>:post:stat:incr:{post_id}:likes      ← 关键:计数只在 Redis 累加
-3. SADD <name>:post:updated_set {post_id}          ← 标记"这帖有未刷盘的增量"
+2. INCR putao:post:stat:incr:{post_id}:likes      ← 关键:计数只在 Redis 累加
+3. SADD putao:post:updated_set {post_id}          ← 标记"这帖有未刷盘的增量"
 4. 返回,~1ms
 ```
 
@@ -331,7 +346,7 @@ UPDATE post_stats SET like_count = like_count + 1 WHERE post_id = 999;
 **刷盘路径**(`LikeFlushJob` 每 60 秒一次):
 
 ```
-1. SRANDMEMBER <name>:post:updated_set 100   → 这分钟有变动的 100 个 post_id
+1. SRANDMEMBER putao:post:updated_set 100   → 这分钟有变动的 100 个 post_id
 2. 对每个 post_id:
      Lua: v = GET incr_key; SET incr_key 0; return v;   ← 原子取走 + 归零
      (比如这分钟攒了 1000 个赞,v = 1000)
@@ -349,7 +364,7 @@ UPDATE post_stats SET like_count = like_count + 1 WHERE post_id = 999;
 ```
 读帖子详情:
 
-实时 likes  =  post_stats.like_count      +      GET <name>:post:stat:incr:{post_id}:likes
+实时 likes  =  post_stats.like_count      +      GET putao:post:stat:incr:{post_id}:likes
                ↑                                 ↑
                「已刷盘基准值」                    「未刷盘增量」
                例 100                            例 1000
@@ -545,7 +560,7 @@ workspace 内所有服务**共享同一个桶**,因此红线 2 在这里的含�
 
 ## 8. gRPC 接口设计
 
-proto 放在 workspace 根的 `proto/post/post.proto`,在 `proto/` 下 `mvn deploy` 推到 Nexus,坐标 `com.dating.<name>.proto:post-proto:0.1.0`(`student-dev-guide §6.5`)。
+proto 放在 workspace 根的 `proto/post/post.proto`,在 `proto/` 下 `mvn deploy` 推到 Nexus,坐标 `com.dating.putao.proto:post-proto:0.1.0`(`student-dev-guide §6.5`)。
 
 ### 8.1 9 个 RPC
 
@@ -599,10 +614,10 @@ App ─ CreatePost(content, [image_key]) ─→ post-service
       - INSERT posts
       - 循环 INSERT post_images(sort_order = i)
       - INSERT post_stats(0, 0)
-   4. Redis HSET <name>:post:detail:{post_id}(TTL 7d)
-   5. ZADD <name>:feed:cold_start:pool:{发帖人性别}
+   4. Redis HSET putao:post:detail:{post_id}(TTL 7d)
+   5. ZADD putao:feed:cold_start:pool:{发帖人性别}
       (gender 由 UserClient.getGenderByUserId 拿,带 Caffeine 30s 本地缓存避免热点)
-   6. PostFanoutProducer.syncSend(topic=youjianxin-dating-dev-post-fanout-v1,
+   6. PostFanoutProducer.syncSend(topic=putao-dating-dev-post-fanout-v1,
         msg={postId, authorUserId, createdAtEpoch})
       - 本地 retry 3 次,timeout 2s/次
       - 3 次全失败 → log.error + post.fanout.produce.fail +1,不阻塞返回
@@ -616,9 +631,9 @@ App ─ CreatePost(content, [image_key]) ─→ post-service
 
 1. SELECT 校验:存在 + 未删 + `userId == post.user_id`(权限)
 2. UPDATE `posts.deleted = 1`
-3. DEL `<name>:post:detail:{post_id}`
+3. DEL `putao:post:detail:{post_id}`
 4. ZREM 冷启动池里这条
-5. SREM `<name>:post:updated_set`
+5. SREM `putao:post:updated_set`
 
 > ⚠️ 不删 `post_likes` / `post_comments` 历史(留审计),不删 `user:timeline:*` 里的 member(成本太高;读侧拿到死 post_id 时 `getPostDetail` 抛 `POST_NOT_FOUND`,FeedService try-catch warn 后跳过)。
 
@@ -636,22 +651,22 @@ WHERE post_likes.status <> EXCLUDED.status;
 
 - 影响行数 = 0(已是目标状态)→ 幂等,直接 return。
 - 影响行数 = 1(状态真变了)→ Redis:
-  - INCR/DECR `<name>:post:stat:incr:{post_id}:likes`(+1 / -1)
-  - SADD `<name>:post:updated_set` post_id
+  - INCR/DECR `putao:post:stat:incr:{post_id}:likes`(+1 / -1)
+  - SADD `putao:post:updated_set` post_id
 
 > **为什么不直接 UPDATE post_stats?** 见 §6.2「写合并」—— 爆款帖单行锁打满会拖垮整个 PG。Redis 累加 + 1 分钟批量刷盘把 1000 次 UPDATE 合并成 1 次。
 
 ### 9.4 LikeFlushJob(每 1 分钟,ShedLock 多实例互斥)
 
 ```
-1. SRANDMEMBER <name>:post:updated_set 100  (Spring distinctRandomMembers)
+1. SRANDMEMBER putao:post:updated_set 100  (Spring distinctRandomMembers)
 2. for each post_id:
      Lua: local v = redis.call('GET', KEYS[1])
           redis.call('SET', KEYS[1], 0)
           return v;
      // 原子拿走 + 归零,期间新点赞写回 1 不会丢
      UPDATE post_stats SET like_count = like_count + ? WHERE post_id = ?
-3. SREM <name>:post:updated_set 这批 post_id
+3. SREM putao:post:updated_set 这批 post_id
 ```
 
 关键点:
@@ -663,9 +678,9 @@ WHERE post_likes.status <> EXCLUDED.status;
 
 1. validateComment(content,1-512,trim)
 2. INSERT `post_comments`(`root_id=0, parent_id=0, reply_to_user_id=0`)
-3. ZADD `<name>:post:comments:{post_id}` score=comment_id member=comment_id;ZREMRANGEBYRANK 裁剪到 200
-4. Redis INCR `<name>:post:stat:incr:{post_id}:comments`
-5. SADD `<name>:post:updated_set`(让 `CommentFlushJob` 拾起)
+3. ZADD `putao:post:comments:{post_id}` score=comment_id member=comment_id;ZREMRANGEBYRANK 裁剪到 200
+4. Redis INCR `putao:post:stat:incr:{post_id}:comments`
+5. SADD `putao:post:updated_set`(让 `CommentFlushJob` 拾起)
 
 ### 9.6 列表评论(ListComments,游标分页)
 
@@ -685,23 +700,23 @@ cursor = N(上一页最末的 comment_id),首次传 0
 
 1. 权限校验:必须是评论作者
 2. UPDATE `post_comments.deleted = 1`
-3. ZREM `<name>:post:comments:{post_id}` member=comment_id
-4. DECR `<name>:post:stat:incr:{post_id}:comments`,SADD updated_set
+3. ZREM `putao:post:comments:{post_id}` member=comment_id
+4. DECR `putao:post:stat:incr:{post_id}:comments`,SADD updated_set
 
 ### 9.8 推荐 Feed(GetRecommendFeed)
 
 ```
 cursor = "recOffset:csOffset"(首次 "0:0")
-gender = userClient.getGenderByUserId(currentUserId)
-oppositeSex = !gender   // 异性优先
+gender = userClient.getGender(currentUserId)
+oppositeSex = gender == Gender.MALE ? Gender.FEMALE : Gender.MALE   // 异性优先
 
 并行三路:
-  ① ZREVRANGE  <name>:feed:pool:recommend:{oppositeSex}      [recOffset, recOffset+30]
-  ② ZREVRANGEBYSCORE  <name>:user:timeline:{currentUserId}    最近 7 天,0,5
-  ③ ZREVRANGE  <name>:feed:cold_start:pool:{oppositeSex}     [csOffset, csOffset+10]
+  ① ZREVRANGE  putao:feed:pool:recommend:{oppositeSex}      [recOffset, recOffset+30]
+  ② ZREVRANGEBYSCORE  putao:user:timeline:{currentUserId}    最近 7 天,0,5
+  ③ ZREVRANGE  putao:feed:cold_start:pool:{oppositeSex}     [csOffset, csOffset+10]
 
 布隆过滤:
-  Redisson BloomFilter <name>:user:read:bloom:{currentUserId}
+  Redisson BloomFilter putao:user:read:bloom:{currentUserId}
   → 三路所有 ID 过滤一遍
 
 混排(FeedService.mergeThreeWay):
@@ -770,8 +785,8 @@ Feed 读时同时取 3 路数据 (§10.3),这 3 路池子由 3 套**独立**机�
                               ▼
 ┌── Step 2: 实时计数补偿(读 Redis 增量)──────────────────────┐
 │  for each post_id:                                          │
-│    likeIncr    = GET <name>:post:stat:incr:{pid}:likes      │
-│    commentIncr = GET <name>:post:stat:incr:{pid}:comments   │
+│    likeIncr    = GET putao:post:stat:incr:{pid}:likes      │
+│    commentIncr = GET putao:post:stat:incr:{pid}:comments   │
 │    likes    = stat.likeCount    + likeIncr                  │
 │    comments = stat.commentCount + commentIncr               │
 │    // 不补偿就会用「上一次刷盘后的旧值」打分,排序失真         │
@@ -793,21 +808,22 @@ Feed 读时同时取 3 路数据 (§10.3),这 3 路池子由 3 套**独立**机�
 │  // 本地 Caffeine 30s 缓存吸收同一用户的多帖重复查询           │
 │                                                              │
 │  for each post:                                             │
-│    if genderMap[post.userId] == MALE:                       │
+│    if genderMap[post.userId] == Gender.MALE:                       │
 │        zaddBatch.put("...:male:tmp",   post.postId, score)  │
 │    else:                                                    │
 │        zaddBatch.put("...:female:tmp", post.postId, score)  │
+    // UNKNOWN -> 归入 female 池,日志 +1 feed.gender.unknown
 └──────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌── Step 5: 影子写 tmp ZSet + 裁剪 + TTL ─────────────────────┐
 │  // tmp key 先清掉残留(上次 Job 没跑完?异常?)              │
-│  DEL <name>:feed:pool:recommend:male:tmp                    │
-│  DEL <name>:feed:pool:recommend:female:tmp                  │
+│  DEL putao:feed:pool:recommend:male:tmp                    │
+│  DEL putao:feed:pool:recommend:female:tmp                  │
 │                                                              │
 │  // 一次性 ZADD 全部                                         │
-│  ZADD <name>:feed:pool:recommend:male:tmp  (score, postId)…│
-│  ZADD <name>:feed:pool:recommend:female:tmp ...             │
+│  ZADD putao:feed:pool:recommend:male:tmp  (score, postId)…│
+│  ZADD putao:feed:pool:recommend:female:tmp ...             │
 │                                                              │
 │  // 裁剪到前 3000(分数从低到高排,砍掉 0 ~ size-3001)        │
 │  size = ZCARD ...:male:tmp                                  │
@@ -820,10 +836,10 @@ Feed 读时同时取 3 路数据 (§10.3),这 3 路池子由 3 套**独立**机�
                               │
                               ▼
 ┌── Step 6: 原子 RENAME(无缝切换)─────────────────────────────┐
-│  RENAME <name>:feed:pool:recommend:male:tmp                 │
-│      → <name>:feed:pool:recommend:male                      │
-│  RENAME <name>:feed:pool:recommend:female:tmp               │
-│      → <name>:feed:pool:recommend:female                    │
+│  RENAME putao:feed:pool:recommend:male:tmp                 │
+│      → putao:feed:pool:recommend:male                      │
+│  RENAME putao:feed:pool:recommend:female:tmp               │
+│      → putao:feed:pool:recommend:female                    │
 │                                                              │
 │  // RENAME 是 Redis 原子操作,读侧绝不会读到半写状态           │
 │  // 旧 key 自动被覆盖,旧池里那 3000 个 post_id 整体过期不用清理│
@@ -866,7 +882,7 @@ Feed 读时同时取 3 路数据 (§10.3),这 3 路池子由 3 套**独立**机�
 | 扩容吞吐 | 加 `@Async` 线程池容量(仍单进程) | 加 Consumer 实例,水平扩展 |
 | 跟发帖事务关系 | 同 JVM 事务后调度 | 事务 COMMIT 后 syncSend,失败不回滚 DB |
 
-**触发**:`PostWriteService.createPost` 事务 COMMIT 之后,同步调 `PostFanoutProducer.syncSend` 发到 topic `youjianxin-dating-dev-post-fanout-v1`(§9.1 第 6 步)。
+**触发**:`PostWriteService.createPost` 事务 COMMIT 之后,同步调 `PostFanoutProducer.syncSend` 发到 topic `putao-dating-dev-post-fanout-v1`(§9.1 第 6 步)。
 
 **事务-消息一致性**:**不上 Outbox**,接受"事务提交但 MQ 发送失败"这个极小窗口,理由:
 
@@ -876,6 +892,22 @@ Feed 读时同时取 3 路数据 (§10.3),这 3 路池子由 3 套**独立**机�
 - 不引入 outbox 表 / 扫描 Job → 不增加 PG 写负担
 
 → 如果将来产品对「好友帖必出现在第 3 位」是硬要求,再升级到 Outbox。
+
+**Producer 配置**(Nacos `post-service-dev.yaml`):
+
+```yaml
+rocketmq:
+  name-server: 38.76.188.242:9876
+  producer:
+    group: dev_putao_post_producer
+    access-key: rocketmq-student
+    secret-key: 5cafa390b8a42c25
+    send-message-timeout: 3000
+    retry-times-when-send-failed: 0
+```
+
+> `retry-times-when-send-failed: 0` 让 RocketMQ client 不要自动重试,
+> 把 retry 逻辑收进代码(3 次手动 retry + 2s/次),语义更清晰可控。
 
 **消息结构**(只放索引,不在 Producer 端拉好 followers):
 
@@ -898,7 +930,7 @@ Feed 读时同时取 3 路数据 (§10.3),这 3 路池子由 3 套**独立**机�
 ```java
 @Component
 public class PostFanoutProducer {
-    private static final String TOPIC = "youjianxin-dating-dev-post-fanout-v1";
+    private static final String TOPIC = "putao-dating-dev-post-fanout-v1";
     private final RocketMQTemplate template;
     private final MeterRegistry metrics;
 
@@ -923,8 +955,8 @@ public class PostFanoutProducer {
 ```java
 @Component
 @RocketMQMessageListener(
-    topic             = "youjianxin-dating-dev-post-fanout-v1",
-    consumerGroup     = "youjianxin-dating-dev-post-service-fanout",
+    topic             = "putao-dating-dev-post-fanout-v1",
+    consumerGroup     = "putao-dating-dev-post-service-fanout",
     consumeMode       = ConsumeMode.CONCURRENTLY,
     maxReconsumeTimes = 16
 )
@@ -932,16 +964,21 @@ public class PostFanoutConsumer implements RocketMQListener<FanoutMessage> {
 
     @Override
     public void onMessage(FanoutMessage msg) {
-        // user-service down → 抛 RPC 异常 → RocketMQ 自动重投,给上游喘息时间
         var followers = userClient.getFriendUserIds(msg.authorUserId());
         if (followers.isEmpty()) return;
 
+        // Lua: ZADD + 裁剪到 100 条 + 设 TTL,一条命令搞定,0 RTT 额外开销
+        String luaScript =
+            "redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2]);" +
+            "redis.call('ZREMRANGEBYRANK', KEYS[1], 0, -101);" +
+            "redis.call('PEXPIRE', KEYS[1], 604800000);" +
+            "return 1;";
+        String[] keys = new String[1];
         for (long follower : followers) {
-            var key = keyBuilder.userTimeline(follower);
-            redis.opsForZSet().add(key, String.valueOf(msg.postId()), msg.createdAtEpoch());
-            long size = redis.opsForZSet().size(key);
-            if (size > 100) redis.opsForZSet().removeRange(key, 0, size - 101);
-            redis.expire(key, Duration.ofDays(7));
+            keys[0] = keyBuilder.userTimeline(follower);
+            redis.execute((RedisCallback<Object>) conn ->
+                conn.eval(luaScript.getBytes(), ReturnType.INTEGER, 1,
+                    keys[0], String.valueOf(msg.createdAtEpoch()), String.valueOf(msg.postId())));
         }
     }
 }
@@ -962,14 +999,14 @@ public class PostFanoutConsumer implements RocketMQListener<FanoutMessage> {
 │    Caffeine 30s 缓存吸收同作者多帖的重复 RPC                   │
 │    user-service down → 抛异常 → 自动重投                       │
 │  for each follower:                                         │
-│    ZADD <name>:user:timeline:{follower} (epoch, postId)     │
+│    ZADD putao:user:timeline:{follower} (epoch, postId)     │
 │    ZREMRANGEBYRANK ... 裁到 100                              │
 │    EXPIRE 7d                                                │
 └──────────────────────────────────────────────────────────────┘
                               │  失败 → 自动重投,最多 16 次
                               ▼
 ┌── Step 3: 死信(16 次仍失败)─────────────────────────────────┐
-│  转发到 %DLQ%youjianxin-dating-dev-post-service-fanout              │
+│  转发到 %DLQ%putao-dating-dev-post-service-fanout              │
 │  Gauge post.fanout.dlq.size > 0 立即告警,人工排查             │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -1020,11 +1057,12 @@ RocketMQ Consumer Group 天然按 queue 分配,多实例自动负载均衡且不
 
 ```
 ┌── Step 1: 判发帖人性别 ─────────────────────────────────────┐
-│  isMale = userClient.isMale(发帖人 userId)                  │
+│  gender = userClient.getGender(发帖人 userId)                  │
 │  // 命中 Caffeine 30s 缓存,~微秒                             │
 │                                                              │
-│  key = isMale ? <name>:feed:cold_start:pool:male            │
-│              : <name>:feed:cold_start:pool:female           │
+│  key = gender == Gender.MALE ? putao:feed:cold_start:pool:male
+            : gender == Gender.FEMALE ? putao:feed:cold_start:pool:female
+            : (log.warn("性别 UNKNOWN, userId={}, 默认归 female 池", userId), putao:feed:cold_start:pool:female)
 │  // 池里装"该性别发的帖",读侧按当前用户取异性池               │
 └──────────────────────────────────────────────────────────────┘
                               │
@@ -1102,15 +1140,32 @@ public class UserClient {
     @GrpcClient("user-service")
     private UserServiceGrpc.UserServiceBlockingStub stub;
 
-    // ① 取好友 user_id 列表,用于发帖写扩散
+    /**
+     * 取好友 user_id 列表,用于发帖写扩散。
+     * @param userId 当前用户
+     * @return 好友 userId 列表;user-service 不可用时返空(降级:该帖好友通道断,5 分钟后全网池兜底)
+     */
     public List<Long> getFriendUserIds(Long userId) { ... }
 
-    // ② 取性别,用于 Feed 池分桶
-    //    返回:true=男 / false=女 / fallback false(user-service 不可用 / 用户未设置)
-    public boolean isMale(Long userId) { ... }
+    /**
+     * 取单个用户性别,用于发帖时性别分桶。
+     * @param userId 用户
+     * @return 性别枚举;user-service 不可用时返 UNKNOWN(归入 female 池,日志 +1 告警指标)
+     */
+    public Gender getGender(Long userId) { ... }
 
-    // ③ 批量取性别,FeedScoreJob 重建池时用
-    public Map<Long, Boolean> getGenders(List<Long> userIds) { ... }
+    /**
+     * 批量取用户性别,FeedScoreJob 重建池时用。
+     * @param userIds 用户列表
+     * @return userId -> 性别;RPC 失败时对应 entry 值为 UNKNOWN
+     */
+    public Map<Long, Gender> getGenders(List<Long> userIds) { ... }
+
+    /**
+     * 用户性别枚举。
+     * UNKNOWN = user-service 不可用或用户未设置性别。
+     */
+    public enum Gender { MALE, FEMALE, UNKNOWN }
 }
 ```
 
@@ -1150,7 +1205,7 @@ public class UserClient {
 | PG 主库挂 | 写全失败;读靠 7 天的 `post:detail:*` 兜底 | 健康检查失败,gateway 熔断本服务 |
 | user-service down | Consumer fanout 重投积压;FeedScoreJob 全部归一性别池 | Consumer 自动重投等上游恢复;Feed 降级为「无性别区分」推荐 |
 | RocketMQ Broker 挂 | 发帖 Producer 失败 → 该帖好友通道断 | log.error + `post.fanout.produce.fail` +1;5 分钟池重建兜底;Broker 恢复后既有积压 msg 自动消费 |
-| `LikeFlushJob` 卡死 30 分钟 | 增量在 Redis 累加 | 监控 `<name>:post:updated_set` 长度报警,恢复后一次性消化 |
+| `LikeFlushJob` 卡死 30 分钟 | 增量在 Redis 累加 | 监控 `putao:post:updated_set` 长度报警,恢复后一次性消化 |
 | MinIO 故障 | 图片 404 | 帖子文本仍可见;前端 UI 兜底占位图 |
 | `FeedScoreJob` 卡住 | 池数据陈旧(>5 min)| 短期可接受;若长时间不重建,只看到 cold_start + friend |
 
@@ -1211,9 +1266,9 @@ public class UserClient {
 ### Day 1 ~ 2:基础
 
 - [ ] 在自己 `<yourpinyin>-workspace` 仓库下,复制 `dating-server/example-service` → `post-service`,改包名 `com.dating.post`(`student-dev-guide §A`)
-- [ ] `proto/post/post.proto` 编 9 个 RPC + 5 个 message;`mvn deploy` 推到 Nexus(`com.dating.<name>.proto:post-proto:0.1.0`)
+- [ ] `proto/post/post.proto` 编 9 个 RPC + 5 个 message;`mvn deploy` 推到 Nexus(`com.dating.putao.proto:post-proto:0.1.0`)
 - [ ] `post-service/pom.xml` 加依赖:
-  - `com.dating.<name>.proto:post-proto:0.1.0`
+  - `com.dating.putao.proto:post-proto:0.1.0`
   - `grpc-server-spring-boot-starter:3.1.0.RELEASE` + `grpc-netty-shaded:1.68.1`
   - `mybatis-plus-spring-boot3-starter:3.5.9` + `postgresql` + `flyway-core` + `flyway-database-postgresql`
   - `redisson-spring-boot-starter`
@@ -1270,8 +1325,8 @@ public class UserClient {
 | 1 | 多表 JOIN | 所有 Mapper 单表;评论列表 / Feed 详情靠 service 多次单表 + `selectBatchIds` |
 | 2 | 跨服务直连别人库 / Redis / 桶 | 好友 / 性别走 `UserClient` gRPC;workspace 共享桶但**只写自己的 `post-image/` 前缀,不读别的服务的 key 前缀** |
 | 3 | 服务间 HTTP 互调 | post-service 与 user-service 全 gRPC,`discovery:///user-service` 寻址 |
-| 4 | 凭据进 git | `application*.yml` 全部 `${ENV}` 占位;真值进 Nacos(workspace `nacos/post-service-dev.yaml` 是共享 dev 凭据的粘贴模板,允许带真值,见 CLAUDE.md 红线 #1)或本机环境变量;生产凭据仍严禁进 git |
-| 5 | 引入清单外中间件 | PG + Redis + MinIO + RocketMQ(已纳入清单);本服务 RocketMQ 仅限 fanout 场景(见 §10.2.2;topic/group 带 `youjianxin-dating-dev-` 前缀),计数刷盘等仍走 Redis;ES / Mongo / ZK 等仍禁 |
+| 4 | 凭据进 git | `application*.yml` 全部 `${ENV}` 占位;真值进 Nacos(workspace `nacos/post-service-dev.yaml` 是共享 dev 凭据的粘贴模板,允许带真值,见 `.cursorrules` 红线 #4)或本机环境变量;生产凭据仍严禁进 git |
+| 5 | 引入清单外中间件 | PG + Redis + MinIO + RocketMQ(已纳入清单);本服务 RocketMQ 仅限 fanout 场景(见 §10.2.2;topic/group 带 `putao-dating-dev-` 前缀),计数刷盘等仍走 Redis;ES / Mongo / ZK 等仍禁 |
 | 6 | 自建 WebSocket / 直调 OpenIM | 本期不产生 IM 消息;阶段三推送走 `im-service` |
 | 7 | 生产用公网 IP 访问 PG/Redis/Nacos | 本机 dev 用 `38.76.188.242` 是规范;若部署到生产侧自然切容器名 |
 | 8 | `TIMESTAMP` 或写死 `Asia/Shanghai` | 全 `TIMESTAMPTZ`,Hikari `connection-init-sql: SET TIME ZONE 'UTC'`,容器 `TZ=UTC` |
