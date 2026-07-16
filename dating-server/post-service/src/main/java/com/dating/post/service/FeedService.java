@@ -3,10 +3,12 @@ package com.dating.post.service;
 import com.dating.post.client.UserClient;
 import com.dating.post.constant.RedisKey;
 import com.dating.post.entity.PostEntity;
+import com.dating.post.manager.PostLikeManager;
 import com.dating.post.manager.PostManager;
 import com.dating.post.manager.PostStatManager;
 import com.dating.post.vo.PostDetailVO;
 import com.dating.post.vo.RecommendFeedVO;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBloomFilter;
@@ -27,8 +29,25 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FeedService {
 
+    /**
+     * Feed 来源枚举，用于统计和日志追踪.
+     */
+    @Getter
+    private enum FeedSource {
+        RECOMMEND("recommend"),
+        FRIEND("friend"),
+        COLD_START("cold_start");
+
+        private final String name;
+
+        FeedSource(String name) {
+            this.name = name;
+        }
+    }
+
     private final PostManager postManager;
     private final PostStatManager postStatManager;
+    private final PostLikeManager postLikeManager;
     private final UserClient userClient;
     private final StringRedisTemplate stringRedisTemplate;
     private final RedissonClient redissonClient;
@@ -54,43 +73,193 @@ public class FeedService {
         boolean isMale = userClient.isMale(currentUserId);
         String oppositeGender = isMale ? "female" : "male";
 
-        // 3. 并行三路获取
-        Set<Long> usedFriendIds = new HashSet<>();
+        // 3. 初始化结果和统计
         List<PostDetailVO> feedItems = new ArrayList<>();
+        Set<Long> usedFriendIds = new HashSet<>();
+        Map<FeedSource, Integer> sourceCount = new EnumMap<>(FeedSource.class);
+        Arrays.stream(FeedSource.values()).forEach(s -> sourceCount.put(s, 0));
 
-        // 位置分配: 1,2,4,5,7,8,9,10 -> recommend; 3 -> friend; 6 -> cold_start
-        List<Integer> recommendSlots = List.of(0, 1, 3, 4, 6, 7, 8, 9);
-        List<Integer> friendSlots = List.of(2);
-        List<Integer> coldStartSlots = List.of(5);
-
-        // 获取三路数据
+        // 4. 获取三路数据
         List<Long> recommendIds = getRecommendPool(oppositeGender, recOffset, pageSize + 10);
         List<Long> friendIds = getFriendTimeline(currentUserId, 5);
         List<Long> coldStartIds = getColdStartPool(oppositeGender, csOffset, 5);
 
-        // 获取布隆过滤器
+        // 5. 获取布隆过滤器
         RBloomFilter<String> bloomFilter = getUserBloomFilter(currentUserId);
 
-        // 填充推荐位
-        fillSlots(recommendSlots, recommendIds, feedItems, currentUserId, bloomFilter, usedFriendIds);
-        fillFriendSlots(friendSlots, friendIds, feedItems, currentUserId, bloomFilter, usedFriendIds);
-        fillSlots(coldStartSlots, coldStartIds, feedItems, currentUserId, bloomFilter, usedFriendIds);
+        // 6. 按设计文档位置分配填充
+        // 位置 1,2,4,5,7,8,9,10 (下标 0,1,3,4,6,7,8,9) -> recommend
+        // 位置 3 (下标 2) -> friend
+        // 位置 6 (下标 5) -> cold_start
+        List<Integer> recommendSlots = List.of(0, 1, 3, 4, 6, 7, 8, 9);
+        List<Integer> friendSlots = List.of(2);
+        List<Integer> coldStartSlots = List.of(5);
 
-        // 构建下一页游标
-        String nextCursor = buildNextCursor(recOffset + pageSize, csOffset + 1);
+        // 获取各路有效 ID（去除已读的）
+        List<Long> filteredRecommendIds = filterByBloom(bloomFilter, recommendIds);
+        List<Long> filteredFriendIds = filterByBloom(bloomFilter, friendIds);
+        List<Long> filteredColdStartIds = filterByBloom(bloomFilter, coldStartIds);
+
+        // 填充推荐位 (位置 1,2,4,5,7,8,9,10)
+        int recFilled = fillSlotsWithFallback(recommendSlots, filteredRecommendIds,
+                feedItems, currentUserId, bloomFilter, usedFriendIds, FeedSource.RECOMMEND, sourceCount);
+
+        // 填充好友位 (位置 3) - 强插，有好友数据才填充
+        if (!filteredFriendIds.isEmpty()) {
+            int friendFilled = fillSingleSlotWithPost(2, filteredFriendIds, feedItems, currentUserId,
+                    bloomFilter, usedFriendIds, FeedSource.FRIEND, sourceCount);
+            if (friendFilled == 0) {
+                // 好友位降级到 recommend
+                int degraded = fillSingleSlotWithPost(2, filteredRecommendIds, feedItems, currentUserId,
+                        bloomFilter, usedFriendIds, FeedSource.RECOMMEND, sourceCount);
+                sourceCount.merge(FeedSource.RECOMMEND, degraded, Integer::sum);
+            }
+        }
+
+        // 填充冷启动位 (位置 6) - 新帖扶持，有冷启动数据才填充
+        if (!filteredColdStartIds.isEmpty()) {
+            int coldFilled = fillSingleSlotWithPost(5, filteredColdStartIds, feedItems, currentUserId,
+                    bloomFilter, usedFriendIds, FeedSource.COLD_START, sourceCount);
+            if (coldFilled == 0) {
+                // 冷启动位降级到 recommend
+                int degraded = fillSingleSlotWithPost(5, filteredRecommendIds, feedItems, currentUserId,
+                        bloomFilter, usedFriendIds, FeedSource.RECOMMEND, sourceCount);
+                sourceCount.merge(FeedSource.RECOMMEND, degraded, Integer::sum);
+            }
+        }
+
+        // 剩余推荐位继续填充
+        fillRemainingSlots(recommendSlots, filteredRecommendIds, feedItems, currentUserId,
+                bloomFilter, usedFriendIds, FeedSource.RECOMMEND, sourceCount);
+
+        // 7. 构建下一页游标
+        int nextRecOffset = recOffset + sourceCount.get(FeedSource.RECOMMEND);
+        String nextCursor = buildNextCursor(nextRecOffset, csOffset + 1);
         boolean hasMore = !feedItems.isEmpty();
 
         log.info("Feed returned: userId={} size={} recommend={} friends={} coldStart={}",
                 currentUserId, feedItems.size(),
-                countRecommend(feedItems),
-                countFriends(feedItems),
-                countColdStart(feedItems));
+                sourceCount.get(FeedSource.RECOMMEND),
+                sourceCount.get(FeedSource.FRIEND),
+                sourceCount.get(FeedSource.COLD_START));
 
         return RecommendFeedVO.builder()
                 .items(feedItems.stream().limit(pageSize).toList())
                 .nextCursor(hasMore ? nextCursor : "")
                 .hasMore(hasMore)
                 .build();
+    }
+
+    /**
+     * 过滤掉已读的 ID.
+     */
+    private List<Long> filterByBloom(RBloomFilter<String> bloomFilter, List<Long> ids) {
+        return ids.stream()
+                .filter(id -> !bloomFilter.contains(id.toString()))
+                .toList();
+    }
+
+    /**
+     * 填充指定位置的 slot，支持降级源.
+     */
+    private int fillSingleSlotWithPost(int slotIndex, List<Long> sourceIds,
+                                      List<PostDetailVO> feedItems, Long currentUserId,
+                                      RBloomFilter<String> bloomFilter, Set<Long> usedFriendIds,
+                                      FeedSource source, Map<FeedSource, Integer> sourceCount) {
+        // 扩展 feedItems 到足够长度
+        while (feedItems.size() <= slotIndex) {
+            feedItems.add(null);
+        }
+
+        if (feedItems.get(slotIndex) != null) {
+            return 0; // 已有内容
+        }
+
+        for (Long postId : sourceIds) {
+            if (bloomFilter.contains(postId.toString())) {
+                continue;
+            }
+            try {
+                PostDetailVO detail = getPostDetailForFeed(postId, currentUserId);
+                if (detail != null) {
+                    // 好友频控
+                    if (source == FeedSource.FRIEND && usedFriendIds.contains(detail.getUserId())) {
+                        continue;
+                    }
+                    feedItems.set(slotIndex, detail);
+                    bloomFilter.add(postId.toString());
+                    usedFriendIds.add(detail.getUserId());
+                    sourceCount.merge(source, 1, Integer::sum);
+                    return 1;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to get post detail for feed: postId={}", postId, e);
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * 填充推荐位/冷启动位（无位置要求）.
+     */
+    private int fillSlotsWithFallback(List<Integer> slots, List<Long> sourceIds,
+                                   List<PostDetailVO> feedItems, Long currentUserId,
+                                   RBloomFilter<String> bloomFilter, Set<Long> usedFriendIds,
+                                   FeedSource source, Map<FeedSource, Integer> sourceCount) {
+        int filled = 0;
+        for (Long postId : sourceIds) {
+            if (filled >= slots.size()) {
+                break;
+            }
+            if (bloomFilter.contains(postId.toString())) {
+                continue;
+            }
+            try {
+                PostDetailVO detail = getPostDetailForFeed(postId, currentUserId);
+                if (detail != null) {
+                    feedItems.add(detail);
+                    bloomFilter.add(postId.toString());
+                    sourceCount.merge(source, 1, Integer::sum);
+                    filled++;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to get post detail for feed: postId={}", postId, e);
+            }
+        }
+        return filled;
+    }
+
+    /**
+     * 填充剩余推荐位.
+     */
+    private void fillRemainingSlots(List<Integer> slots, List<Long> sourceIds,
+                                  List<PostDetailVO> feedItems, Long currentUserId,
+                                  RBloomFilter<String> bloomFilter, Set<Long> usedFriendIds,
+                                  FeedSource source, Map<FeedSource, Integer> sourceCount) {
+        Set<Long> addedPostIds = feedItems.stream()
+                .filter(Objects::nonNull)
+                .map(PostDetailVO::getPostId)
+                .collect(Collectors.toSet());
+
+        List<Long> remainingIds = sourceIds.stream()
+                .filter(id -> !addedPostIds.contains(id))
+                .toList();
+
+        for (Long postId : remainingIds) {
+            if (bloomFilter.contains(postId.toString())) {
+                continue;
+            }
+            try {
+                PostDetailVO detail = getPostDetailForFeed(postId, currentUserId);
+                if (detail != null) {
+                    feedItems.add(detail);
+                    bloomFilter.add(postId.toString());
+                    sourceCount.merge(source, 1, Integer::sum);
+                }
+            } catch (Exception e) {
+                log.warn("Failed to get post detail for feed: postId={}", postId, e);
+            }
+        }
     }
 
     private int[] parseCursor(String cursor) {
@@ -162,57 +331,6 @@ public class FeedService {
     }
 
     /**
-     * 填充推荐位/冷启动位.
-     */
-    private void fillSlots(List<Integer> slots, List<Long> sourceIds,
-                          List<PostDetailVO> feedItems, Long currentUserId,
-                          RBloomFilter<String> bloomFilter, Set<Long> usedFriendIds) {
-        for (int i = 0; i < Math.min(sourceIds.size(), slots.size()); i++) {
-            Long postId = sourceIds.get(i);
-            if (bloomFilter.contains(postId.toString())) {
-                continue;
-            }
-            try {
-                PostDetailVO detail = getPostDetailForFeed(postId, currentUserId);
-                if (detail != null) {
-                    feedItems.add(detail);
-                    bloomFilter.add(postId.toString());
-                }
-            } catch (Exception e) {
-                log.warn("Failed to get post detail for feed: postId={}", postId, e);
-            }
-        }
-    }
-
-    /**
-     * 填充好友位(含频控).
-     */
-    private void fillFriendSlots(List<Integer> slots, List<Long> sourceIds,
-                                List<PostDetailVO> feedItems, Long currentUserId,
-                                RBloomFilter<String> bloomFilter, Set<Long> usedFriendIds) {
-        for (int i = 0; i < Math.min(sourceIds.size(), slots.size()); i++) {
-            Long postId = sourceIds.get(i);
-            if (bloomFilter.contains(postId.toString())) {
-                continue;
-            }
-            try {
-                PostDetailVO detail = getPostDetailForFeed(postId, currentUserId);
-                if (detail != null) {
-                    // 好友频控: 同一好友最多1条
-                    if (usedFriendIds.contains(detail.getUserId())) {
-                        continue;
-                    }
-                    feedItems.add(detail);
-                    bloomFilter.add(postId.toString());
-                    usedFriendIds.add(detail.getUserId());
-                }
-            } catch (Exception e) {
-                log.warn("Failed to get post detail for feed: postId={}", postId, e);
-            }
-        }
-    }
-
-    /**
      * 获取帖子详情(用于Feed).
      */
     private PostDetailVO getPostDetailForFeed(Long postId, Long currentUserId) {
@@ -223,8 +341,10 @@ public class FeedService {
 
         int[] counts = postStatManager.getCounts(postId);
         List<String> imageKeys = postManager.listImageKeys(postId);
+
+        // 检查当前用户是否点赞
         boolean isLiked = currentUserId != null
-                && com.dating.post.manager.PostLikeManager.class.cast(null) != null;
+                && postLikeManager.isLiked(currentUserId, postId);
 
         return PostDetailVO.builder()
                 .postId(post.getPostId())
@@ -233,21 +353,9 @@ public class FeedService {
                 .imageKeys(imageKeys)
                 .likeCount(counts[0])
                 .commentCount(counts[1])
-                .isLiked(false)
+                .isLiked(isLiked)
                 .createdAt(post.getCreatedAt().getEpochSecond())
                 .build();
-    }
-
-    private int countRecommend(List<PostDetailVO> items) {
-        return items.size();
-    }
-
-    private int countFriends(List<PostDetailVO> items) {
-        return 0; // 简化统计
-    }
-
-    private int countColdStart(List<PostDetailVO> items) {
-        return 0; // 简化统计
     }
 
     // ========== 热门池重建 ==========
@@ -268,7 +376,7 @@ public class FeedService {
             return;
         }
 
-        // 2. 批量获取计数
+        // 2. 批量获取计数(含 Redis 增量，用于实时热度计算)
         List<Long> postIds = recentPosts.stream().map(PostEntity::getPostId).toList();
         Map<Long, int[]> baseCounts = postStatManager.batchGetBaseCounts(postIds);
 
@@ -283,8 +391,14 @@ public class FeedService {
         long now = System.currentTimeMillis() / 1000;
         for (PostEntity post : recentPosts) {
             int[] counts = baseCounts.getOrDefault(post.getPostId(), new int[]{0, 0});
-            int likes = counts[0];
-            int comments = counts[1];
+            int baseLikes = counts[0];
+            int baseComments = counts[1];
+
+            // Redis 实时增量补偿
+            int likeIncr = postStatManager.getRedisIncr(post.getPostId(), "likes");
+            int commentIncr = postStatManager.getRedisIncr(post.getPostId(), "comments");
+            int likes = baseLikes + likeIncr;
+            int comments = baseComments + commentIncr;
 
             // Hacker News 变体打分
             double hoursDiff = (now - post.getCreatedAt().getEpochSecond()) / 3600.0;

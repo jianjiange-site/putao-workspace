@@ -1,5 +1,7 @@
 package com.dating.post.mq.producer;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -26,6 +28,7 @@ public class PostFanoutProducer {
     public static final String TOPIC = "youjianxin-dating-dev-post-fanout-v1";
 
     private final RocketMQTemplate rocketMQTemplate;
+    private final MeterRegistry meterRegistry;
 
     /**
      * 发送写扩散消息.
@@ -50,7 +53,12 @@ public class PostFanoutProducer {
         }
 
         log.error("Fanout send FAILED after 3 retries, postId={}", postId);
-        // TODO: 指标计数
+        // 指标计数
+        Counter.builder("post.fanout.produce.fail")
+                .description("Fanout message send failed after 3 retries")
+                .tag("topic", TOPIC)
+                .register(meterRegistry)
+                .increment();
     }
 
     /**

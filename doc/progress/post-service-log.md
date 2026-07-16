@@ -14,7 +14,7 @@
 | 数据层 (5张表) | ✅ 完成 | 2026-07-15 | Flyway migration |
 | gRPC 接口 | ✅ 完成 | 2026-07-15 | PostGrpcService |
 | 核心业务 | ✅ 完成 | 2026-07-15 | Day 4~5 |
-| Feed 推荐 | ✅ 完成 | 2026-07-15 | 三路混合 + 热门池重建 |
+| Feed 推荐 | ✅ 完成 | 2026-07-16 | 三路混合 + 热门池重建 + 降级逻辑 |
 | 定时任务 | ✅ 完成 | 2026-07-15 | LikeFlush, CommentFlush, FeedScore |
 | MQ 写扩散 | ✅ 完成 | 2026-07-15 | RocketMQ producer/consumer |
 | 接入部署 | ✅ 完成 | 2026-07-16 | Nacos 配置 + 启动 18084/19084 |
@@ -25,6 +25,40 @@
 ## Session 日志
 
 <!-- 在下方追加每次 session 的记录 -->
+
+## 2026-07-16 (Session #4)
+
+**目标**: 修复 Feed 推荐实现与 post-service-design.md 设计文档的冲突
+
+**背景**: 结合 `architecture-Vibe-ChatVibe服务端技术架构文档.md` 与 `post-service-design.md` 进行对比审查（后者优先），发现 5 个需要修复的问题。
+
+**完成**:
+- [x] 修复 `getPostDetailForFeed` 的 isLiked 逻辑永远为 false 的问题
+  - 原因：`PostLikeManager.class.cast(null) != null` 永远为 false
+  - 修复：注入 `PostLikeManager` 并正确调用 `isLiked(userId, postId)`
+- [x] 在 `rebuildRecommendPool` 中加入 Redis 实时增量补偿
+  - 原因：只查 DB 基准值，没有加上 Redis 增量
+  - 修复：调用 `getRedisIncr()` 获取未刷盘的增量，合并后打分
+- [x] 实现 Feed 三路混合的降级逻辑
+  - 原因：好友/冷启动为空时没有降级到 recommend
+  - 修复：实现 `fillSingleSlotWithPost` 支持降级源
+- [x] 完成统计方法，输出可观测日志
+  - 原因：`countRecommend/Friends/ColdStart` 返回固定值
+  - 修复：添加 `FeedSource` 枚举追踪来源，用 `EnumMap` 统计
+- [x] 实现 `post.fanout.produce.fail` 指标计数
+  - 原因：TODO 占位未实现
+  - 修复：注入 `MeterRegistry` 并在失败时 `Counter.increment()`
+  - 同时添加 `micrometer-registry-prometheus` 依赖到 pom.xml
+
+**修复文件**:
+- `FeedService.java`: 注入 `PostLikeManager`、新增 `FeedSource` 枚举、实现降级逻辑
+- `PostFanoutProducer.java`: 注入 `MeterRegistry`、添加指标计数
+- `pom.xml`: 添加 `micrometer-registry-prometheus` 依赖
+
+**AI 行为备注**:
+- 重构 `FeedService.getRecommendFeed` 时误删了 `getPostDetailForFeed` 方法，发现后立即补回
+
+---
 
 ## 2026-07-15 (Session #2)
 
