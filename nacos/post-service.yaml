@@ -1,0 +1,63 @@
+# Nacos Data ID: post-service.yaml
+# Namespace: putao-dating-dev
+
+spring:
+  # PostgreSQL
+  datasource:
+    url: jdbc:postgresql://38.76.188.242:5433/putao-dating-dev?currentSchema=post&sslmode=disable
+    username: jianjian_test
+    password: MpR5rGjss2Ly6vJFAhaxAwNqVAGVoP7V
+
+  # Redis
+  data:
+    redis:
+      host: 38.76.188.242
+      port: 6380
+      password: sNuP9gZScsj88QbEyTujffOvRCCH9Kv1
+      database: 1
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+
+  # Flyway
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 0
+    placeholder-replacement: false
+
+# Redis Key Prefix
+app:
+  cache:
+    key-prefix: putao:post
+
+# RocketMQ Configuration
+rocketmq:
+  name-server: 38.76.188.242:9876
+  producer:
+    group: putao-dating-dev-post-producer
+    send-message-timeout: 3000
+    access-key: rocketmq-student
+    secret-key: 5cafa390b8a42c25
+
+# Snowflake ID Configuration
+snowflake:
+  worker-id: ${SNOWFLAKE_WORKER_ID:2}
+  datacenter-id: ${SNOWFLAKE_DATACENTER_ID:1}
+
+# MinIO Configuration
+app:
+  upload:
+    endpoint: https://minio-api.jianjiange.site
+    access-key: admin
+    secret-key: GorLDkuOhGyK5c1RXh2gaPooXgtso/MR
+    bucket: putao-dating-dev
+    path-style-access: true
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.dating.post: DEBUG

@@ -23,16 +23,16 @@ spring:
         enabled: true
         server-addr: ${NACOS_SERVER_ADDR:38.76.188.242:8848}
         namespace: ${NACOS_NAMESPACE:putao-dating-dev}
-        username: ${NACOS_USERNAME}
-        password: ${NACOS_PASSWORD}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:jianjiange}
       config:
         enabled: true
         import-check:
           enabled: true
         server-addr: ${NACOS_SERVER_ADDR:38.76.188.242:8848}
         namespace: ${NACOS_NAMESPACE:putao-dating-dev}
-        username: ${NACOS_USERNAME}
-        password: ${NACOS_PASSWORD}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:jianjiange}
         file-extension: yaml
         group: DEFAULT_GROUP
 

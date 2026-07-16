@@ -1,0 +1,61 @@
+# Development profile configuration for Mobile Gateway
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:38.76.188.242}:${DB_PORT:5433}/${DB_NAME:dating_dev_putao}?stringtype=unspecified
+    username: ${DB_USERNAME:jianjian_test}
+    password: ${DB_PASSWORD:}
+  data:
+    redis:
+      host: ${REDIS_HOST:38.76.188.242}
+      port: ${REDIS_PORT:6380}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:1}
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:38.76.188.242:8848}
+        namespace: ${NACOS_NAMESPACE:putao-dating-dev}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:}
+      config:
+        server-addr: ${NACOS_ADDR:38.76.188.242:8848}
+        namespace: ${NACOS_NAMESPACE:putao-dating-dev}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:}
+        file-extension: yaml
+
+app:
+  cache:
+    key-prefix: ${REDIS_KEY_PREFIX:putao}
+
+dating:
+  object-storage:
+    provider: s3
+    endpoint: ${MINIO_ENDPOINT:https://minio-api.jianjiange.site}
+    region: ${MINIO_REGION:us-east-1}
+    access-key: ${MINIO_ACCESS_KEY:}
+    secret-key: ${MINIO_SECRET_KEY:}
+    path-style-access: true
+    bucket: ${MINIO_BUCKET:dating-putao}
+
+# RocketMQ
+rocketmq:
+  name-server: ${ROCKETMQ_NAMESERVER:38.76.188.242:9876}
+  producer:
+    group: dev_putao_producer
+    access-key: ${ROCKETMQ_AK:}
+    secret-key: ${ROCKETMQ_SK:}
+    send-message-timeout: 3000
+
+redisson:
+  single-server-config:
+    address: redis://${REDIS_HOST:38.76.188.242}:${REDIS_PORT:6380}
+    password: ${REDIS_PASSWORD:}
+    database: ${REDIS_DATABASE:1}
+    connection-minimum-idle-size: 2
+    connection-pool-size: 8
+
+logging:
+  level:
+    root: INFO
+    com.dating.gateway: DEBUG

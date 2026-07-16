@@ -1,21 +1,11 @@
 target/
-*.iml
-.idea/
-.vscode/
-.DS_Store
-.env
-.env.*
-!.env.*.example
-*.local.yml
-application-local.yml
-application-local-*.yml
-deploy/.env.deploy
-logs/
+*.class
 *.log
-
-# Ignore all environment-specific configs to prevent secret leakage.
-# Use application-local.yml locally; use Nacos configs in shared envs.
-application-dev.yml
-application-test.yml
-application-staging.yml
-application-prod.yml
+*.jar
+*.war
+.idea/
+*.iml
+.DS_Store
+.classpath
+.project
+.settings/

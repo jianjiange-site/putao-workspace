@@ -14,7 +14,9 @@
 | proto/ 契约（7 服务） | ✅ 完成 | 2026-07-14 | |
 | 8 个微服务脚手架 | ✅ 完成 | 2026-07-14 | example + 7 个业务服务 |
 | Nacos 凭据管理（.env.local） | ✅ 完成 | 2026-07-15 | |
-| 各服务 Nacos yaml 配置 | ⏳ 待开始 | - | 上线前必须就位 |
+| 各服务 Nacos yaml 配置 | ✅ 完成 | 2026-07-16 | 6 个服务 yaml 已发布 |
+| 数据库初始化 | ✅ 完成 | 2026-07-16 | putao_dating_dev + 5 个服务 Flyway 迁移 |
+| 中间件连通性验证 | ✅ 完成 | 2026-07-16 | PostgreSQL / Redis / MinIO |
 
 ---
 
@@ -41,6 +43,70 @@
 - AI 反复提示 PowerShell 不支持 `&&`、git 输出 `\ No newline at end of file` 等噪音，
   后续 commit 应预先在 `git diff --cached` 中检查结尾换行
 - AI 起初建议"在 application.yml 里写明文"，被用户否决后改走 .env.local 方案
+
+---
+
+## 2026-07-16 (Session #3) — 数据库初始化 + Nacos 配置发布
+
+**目标**: 在远程 PostgreSQL 创建 `putao_dating_dev` 数据库，跑 Flyway 迁移，发布 Nacos 配置，验证中间件连通性。
+
+### 1. 数据库创建
+
+| 项目 | 值 |
+|------|---|
+| 数据库名 | `putao_dating_dev`（下划线，PostgreSQL 不支持连字符） |
+| Host:Port | `38.76.188.242:5433` |
+| 用户 | `jianjian_test` |
+| Flyway History 表 | 每服务独立：`flyway_history_user` / `_post` / `_match` / `_im` / `_gateway` |
+
+> **注意**：Nacos 配置中 `putao-dating-dev`（连字符）是 bucket 名（MinIO），JDBC URL 里必须用 `putao_dating_dev`（下划线）。
+
+### 2. Flyway 迁移结果
+
+| 服务 | Flyway Table | 迁移文件 | 结果 |
+|------|-------------|---------|------|
+| user-service | `flyway_history_user` | `V1__init_user_tables.sql` | ✅ v1 |
+| post-service | `flyway_history_post` | `V20260615_01__init_post_tables.sql` | ✅ v20260615.01 |
+| match-service | `flyway_history_match` | `V1__init_match_tables.sql` | ✅ v1 |
+| im-service | `flyway_history_im` | `V1__init_im_tables.sql` | ✅ v1 |
+| mobile-gateway | `flyway_history_gateway` | `V1__init_auth_tables.sql` | ✅ v1 |
+| payment-service | — | 无迁移文件 | ⏭️ 跳过 |
+
+**im-service 踩坑**：`WHERE expires_at > NOW()` 谓词索引失败（PostgreSQL 要求 IMMUTABLE 函数），
+修复：删除了 `idx_im_token_expires` 索引（token 表数据量小，无需优化索引）。
+
+### 3. Nacos 配置发布
+
+6 个服务的 yaml 已通过 Nacos Open API 发布到 namespace `putao-dating-dev`：
+
+```
+im-service.yaml        ✅
+match-service.yaml     ✅
+mobile-gateway.yaml    ✅
+payment-service.yaml   ✅
+post-service.yaml      ✅
+user-service.yaml      ✅
+```
+
+**所有配置统一修改**：`putao-dating-dev`（JDBC 部分）→ `putao_dating_dev`（数据库名），
+MinIO bucket 保留 `putao-dating-dev`（连字符，MinIO 支持）。
+
+### 4. 中间件验证
+
+| 服务 | Host:Port | 状态 | 备注 |
+|------|-----------|------|------|
+| PostgreSQL | `38.76.188.242:5433` | ✅ | 31 张表（含 5 个 flyway_history） |
+| Redis | `38.76.188.242:6380` | ✅ | PONG |
+| MinIO Bucket | `putao-dating-dev` | ✅ | mc mb 成功 |
+
+### 5. 更新的本地文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `nacos/*.yaml`（6 个） | 数据库名 `putao-dating-dev` → `putao_dating_dev`（JDBC 部分） |
+| `scripts/init-infra.bat` | 同上 |
+| `scripts/init-infra.sh` | 同上 |
+| `im-service/.../V1__init_im_tables.sql` | 删除 IMMUTABLE 谓词索引 |
 
 ---
 
@@ -78,10 +144,28 @@ password: jianjiange
 
 - [ ] `.env.local` 存在且 NACOS_PASSWORD 已填
 - [ ] IDE EnvFile 已指向 `.env.local`
-- [ ] Nacos 控制台存在 `<service>-dev.yaml` 配置（**7 个新服务都还没建！**）
+- [ ] Nacos 控制台存在 `<service>-dev.yaml` 配置
 - [ ] application.yml 里 `spring.cloud.nacos.config.import-check: true`（默认已开）
 
-### 5. 常见踩坑速查
+### 5. 数据库名规范
+
+| 存储 | 命名规则 | 示例 |
+|------|---------|------|
+| PostgreSQL（JDBC URL） | 下划线 | `putao_dating_dev` |
+| Nacos Config（JDBC 部分） | 下划线 | `putao_dating_dev` |
+| MinIO Bucket | 连字符 | `putao-dating-dev` |
+
+### 6. Flyway 多服务共存策略
+
+每个服务用独立的 Flyway history 表：
+```bash
+-e FLYWAY_TABLE=flyway_history_<service>
+```
+
+同一数据库下多服务共存时，Flyway 必须在 `public` schema 管理（不指定 schema 隔离），
+但所有表名必须带服务前缀（如 `im_*`、`post_*`）防止冲突。
+
+### 7. 常见踩坑速查
 
 | 现象 | 根因 | 解决 |
 |------|------|------|
@@ -90,3 +174,6 @@ password: jianjiange
 | 启动成功但 datasource 字段为 null | Nacos 上 `<service>-dev.yaml` 不存在或缺字段 | 去 Nacos 控制台补配置 |
 | PowerShell 报错"&& 不是有效分隔符" | 老版本 PS 不支持 `&&` | 用 `;` 串行命令 |
 | `\ No newline at end of file` 警告 | 文件结尾没换行 | `Add-Content ""` 补一行后再 add |
+| Flyway 迁移报错 `functions in index predicate must be marked IMMUTABLE` | 谓词索引用了 NOW() 等非 IMMUTABLE 函数 | 删除该索引或改用普通索引 |
+| PostgreSQL `syntax error at or near "-"` | 数据库名含连字符未引号包裹 | 改用下划线 `putao_dating_dev` |
+| MinIO `Bucket name contains invalid characters` | bucket 名含下划线 | 改用连字符 `putao-dating-dev` |

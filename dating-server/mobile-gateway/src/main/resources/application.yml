@@ -1,50 +1,66 @@
 server:
-  port: ${GATEWAY_PORT:8080}
+  port: 18080
+  servlet:
+    context-path: /
 
 spring:
   application:
-    name: dating-mobile-gateway
+    name: mobile-gateway
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
   config:
-    import: "optional:nacos:dating-mobile-gateway-dev.yaml"
+    import: "optional:nacos:mobile-gateway.yaml"
+
+  # Nacos Discovery
   cloud:
     nacos:
       discovery:
         enabled: true
         server-addr: ${NACOS_SERVER_ADDR:38.76.188.242:8848}
         namespace: ${NACOS_NAMESPACE:putao-dating-dev}
-        username: ${NACOS_USERNAME}
-        password: ${NACOS_PASSWORD}
-      config:
-        enabled: true
-        import-check:
-          enabled: true
-        server-addr: ${NACOS_SERVER_ADDR:38.76.188.242:8848}
-        namespace: ${NACOS_NAMESPACE:putao-dating-dev}
-        username: ${NACOS_USERNAME}
-        password: ${NACOS_PASSWORD}
-        file-extension: yaml
         group: DEFAULT_GROUP
 
-# gRPC Configuration (if needed)
+      config:
+        enabled: true
+        server-addr: ${NACOS_SERVER_ADDR:38.76.188.242:8848}
+        namespace: ${NACOS_NAMESPACE:putao-dating-dev}
+        group: DEFAULT_GROUP
+        file-extension: yaml
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:jianjiange}
+
+# gRPC Server
 grpc:
   server:
-    port: ${GATEWAY_GRPC_PORT:19080}
+    port: 19080
 
+# MyBatis Plus
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.dating.gateway.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# Actuator
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
 
-mybatis-plus:
-  configuration:
-    map-underscore-to-camel-case: true
-
+# Logging
 logging:
   level:
     root: INFO
+    com.dating.gateway: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{36} - %msg%n"

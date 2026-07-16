@@ -1,0 +1,45 @@
+# Nacos Data ID: payment-service.yaml
+# Namespace: putao_dating_dev
+
+spring:
+  # PostgreSQL
+  datasource:
+    url: jdbc:postgresql://38.76.188.242:5433/putao_dating_dev?currentSchema=payment&sslmode=disable
+    username: jianjian_test
+    password: MpR5rGjss2Ly6vJFAhaxAwNqVAGVoP7V
+
+  # Redis
+  data:
+    redis:
+      host: 38.76.188.242
+      port: 6380
+      password: sNuP9gZScsj88QbEyTujffOvRCCH9Kv1
+      database: 1
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+
+  # Flyway
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 0
+    placeholder-replacement: false
+
+# Redis Key Prefix
+app:
+  cache:
+    key-prefix: putao:payment
+
+# Snowflake ID Configuration
+snowflake:
+  worker-id: ${SNOWFLAKE_WORKER_ID:5}
+  datacenter-id: ${SNOWFLAKE_DATACENTER_ID:1}
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.dating.payment: DEBUG
