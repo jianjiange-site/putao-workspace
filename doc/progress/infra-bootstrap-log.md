@@ -110,6 +110,34 @@ MinIO bucket 保留 `putao-dating-dev`（连字符，MinIO 支持）。
 
 ---
 
+## 2026-07-17 (Session #4) — Mobile Gateway 启动问题修复
+
+**目标**: 修复 mobile-gateway 服务启动时的 gRPC 版本冲突问题。
+
+**问题现象**:
+```
+Failed to start bean 'shadedNettyGrpcServerLifecycle'
+Caused by: java.lang.NoClassDefFoundError: io/grpc/InternalGlobalInterceptors
+```
+
+**根因**: `grpc-spring-boot-starter 2.15.0.RELEASE` 需要 grpc 1.58.x，但 `grpc.version` 被升级到了 1.68.1。
+
+**解决**:
+- 降级 `proto/pom.xml` 中 `grpc.version` 从 1.68.1 → 1.58.0
+- 同步降级 `dating-server/mobile-gateway/pom.xml` 中 `grpc.version`
+- 重新编译 proto 模块并 install 到本地仓库
+- 重新编译 mobile-gateway
+
+**验证**:
+```bash
+cd proto; mvn clean install -DskipTests
+cd ../dating-server/mobile-gateway; mvn clean compile -DskipTests
+```
+
+**详细记录**: 见 `doc/progress/mobile-gateway-bootstrap-log.md`
+
+---
+
 ## 关键经验（下次开新服务直接抄）
 
 ### 1. 本地凭据管理：.env.local 模式
@@ -177,3 +205,4 @@ password: jianjiange
 | Flyway 迁移报错 `functions in index predicate must be marked IMMUTABLE` | 谓词索引用了 NOW() 等非 IMMUTABLE 函数 | 删除该索引或改用普通索引 |
 | PostgreSQL `syntax error at or near "-"` | 数据库名含连字符未引号包裹 | 改用下划线 `putao_dating_dev` |
 | MinIO `Bucket name contains invalid characters` | bucket 名含下划线 | 改用连字符 `putao-dating-dev` |
+| `NoClassDefFoundError: io/grpc/InternalGlobalInterceptors` | gRPC 版本冲突（grpc-spring-boot-starter 2.15.x 只支持 grpc 1.58.x） | 统一降级 grpc.version 到 1.58.0 |

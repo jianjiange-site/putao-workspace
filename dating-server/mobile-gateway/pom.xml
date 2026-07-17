@@ -26,7 +26,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <mybatis-plus.version>3.5.9</mybatis-plus.version>
         <grpc-spring-boot.version>2.15.0.RELEASE</grpc-spring-boot.version>
-        <grpc.version>1.68.1</grpc.version>
+        <grpc.version>1.58.0</grpc.version>
         <protobuf.version>4.28.3</protobuf.version>
         <spring-cloud-alibaba.version>2023.0.1.0</spring-cloud-alibaba.version>
         <resilience4j.version>2.2.0</resilience4j.version>
@@ -104,6 +104,8 @@
             <artifactId>common-proto</artifactId>
             <version>1.0.0-SNAPSHOT</version>
         </dependency>
+        <!-- payment-proto: stubbed, to be added when payment-service is implemented -->
+
 
         <!-- Spring Boot Web -->
         <dependency>
@@ -180,6 +182,11 @@
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java</artifactId>
             <version>${protobuf.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-core</artifactId>
+            <version>${grpc.version}</version>
         </dependency>
         <dependency>
             <groupId>io.grpc</groupId>
@@ -271,6 +278,24 @@
             </extension>
         </extensions>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>21</release>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>1.18.36</version>
+                        </path>
+                    </annotationProcessorPaths>
+                    <compilerArgs>
+                        <arg>-Xlint:-options</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
