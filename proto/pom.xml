@@ -19,6 +19,7 @@
         <module>gateway</module>
         <module>im</module>
         <module>match</module>
+        <module>payment</module>
     </modules>
 
     <properties>

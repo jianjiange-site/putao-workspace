@@ -10,9 +10,9 @@
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>im-proto</artifactId>
+    <artifactId>payment-proto</artifactId>
     <packaging>jar</packaging>
-    <name>IM Proto</name>
+    <name>Payment Proto</name>
 
     <properties>
         <grpc.version>1.68.1</grpc.version>
@@ -23,11 +23,6 @@
         <dependency>
             <groupId>com.dating</groupId>
             <artifactId>common-proto</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.dating</groupId>
-            <artifactId>user-proto</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>

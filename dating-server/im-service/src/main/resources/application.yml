@@ -10,12 +10,19 @@ spring:
     import: "optional:nacos:dating-im-service-dev.yaml"
   datasource:
     driver-class-name: org.postgresql.Driver
+    url: ${POSTGRESQL_URL:jdbc:postgresql://localhost:5432/dating_chat}
+    username: ${POSTGRESQL_USERNAME:postgres}
+    password: ${POSTGRESQL_PASSWORD:postgres}
     hikari:
       maximum-pool-size: 8
       minimum-idle: 2
       connection-init-sql: SET TIME ZONE 'UTC'
   data:
     redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 0
       timeout: 3s
   cloud:
     nacos:
@@ -35,11 +42,82 @@ spring:
         password: ${NACOS_PASSWORD:jianjiange}
         file-extension: yaml
         group: DEFAULT_GROUP
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    table: flyway_history_im
 
+# gRPC Server Configuration
 grpc:
   server:
     port: ${IM_SERVICE_GRPC_PORT:19082}
 
+# gRPC Clients Configuration
+user:
+  service:
+    grpc:
+      host: ${USER_SERVICE_HOST:localhost}
+      port: ${USER_SERVICE_GRPC_PORT:19090}
+
+payment:
+  service:
+    grpc:
+      host: ${PAYMENT_SERVICE_HOST:localhost}
+      port: ${PAYMENT_SERVICE_GRPC_PORT:19093}
+
+ai-chat:
+  service:
+    grpc:
+      host: ${AI_CHAT_SERVICE_HOST:localhost}
+      port: ${AI_CHAT_SERVICE_GRPC_PORT:19095}
+
+# OpenIM Configuration
+openim:
+  api-url: ${OPENIM_API_URL:http://127.0.0.1:10002}
+  admin-user-id: ${OPENIM_ADMIN_USER_ID:imAdmin}
+  admin-secret: ${OPENIM_ADMIN_SECRET:}
+  admin-token: ${OPENIM_ADMIN_TOKEN:}
+
+# LiveKit Configuration
+livekit:
+  api-key: ${LIVEKIT_API_KEY:}
+  secret-key: ${LIVEKIT_SECRET_KEY:}
+
+# IM Message Configuration
+im:
+  message:
+    charge:
+      enabled: ${IM_MESSAGE_CHARGE_ENABLED:true}
+      coin-cost: ${IM_MESSAGE_COIN_COST:6}
+      async: ${IM_MESSAGE_CHARGE_ASYNC:true}
+    anti-funnel:
+      enabled: ${IM_MESSAGE_ANTI_FUNNEL_ENABLED:true}
+  ai-reply:
+    max-messages: 4
+    min-segments: 3
+    min-split-chars: 30
+    per-char-delay-ms: 45
+    min-delay-ms: 300
+    max-delay-ms: 1500
+  typing:
+    refresh-interval-ms: 3000
+    onset-delay-min-ms: 2000
+    onset-delay-max-ms: 5000
+  presence:
+    sweep:
+      enabled: true
+      max-online-hours: 26
+      cron: "0 */30 * * * *"
+
+# RocketMQ Configuration
+rocketmq:
+  name-server: ${ROCKETMQ_NAMESERVER:38.76.188.242:9876}
+  producer:
+    group: ${ROCKETMQ_PRODUCER_GROUP:putao_dating_dev_im_producer}
+    send-message-timeout: 3000
+
+# Actuator Configuration
 management:
   endpoints:
     web:
@@ -49,17 +127,23 @@ management:
     health:
       show-details: always
 
+# MyBatis Plus Configuration
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
   type-aliases-package: com.dating.im.entity
   configuration:
     map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
   global-config:
     db-config:
       logic-delete-field: deleted
       logic-delete-value: 1
       logic-not-delete-value: 0
 
+# Logging Configuration
 logging:
   level:
     root: INFO
+    com.dating.im: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

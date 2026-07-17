@@ -8,6 +8,8 @@ option java_outer_classname = "ImProto";
 
 import "common/result.proto";
 
+// ==================== Message ====================
+
 // Send message request
 message SendMessageRequest {
   int64 sender_id = 1;
@@ -22,6 +24,8 @@ message SendMessageResponse {
   int64 created_at = 2;
 }
 
+// ==================== Token ====================
+
 // Get IM token request
 message GetImTokenRequest {
   int64 user_id = 1;
@@ -32,9 +36,61 @@ message GetImTokenRequest {
 // Get IM token response
 message GetImTokenResponse {
   string im_token = 1;
-  string api_url = 2;
-  string ws_url = 3;
+  int64 expire_seconds = 2;
 }
+
+// Generate call token request (LiveKit)
+message GenerateCallTokenRequest {
+  int64 user_id = 1;
+  string peer_id = 2;
+}
+
+// Generate call token response
+message GenerateCallTokenResponse {
+  string token = 1;
+}
+
+// ==================== Callback ====================
+
+// On raw callback request (from mobile-gateway)
+message OnRawCallbackRequest {
+  string provider = 1;    // openim/tencent
+  bytes payload = 2;      // raw JSON
+}
+
+// On raw callback response
+message OnRawCallbackResponse {
+  int32 code = 1;        // 0=allow, non-zero=reject
+  string message = 2;
+}
+
+// ==================== Presence ====================
+
+// List online users request
+message ListOnlineUsersRequest {
+  int64 since = 1;       // start timestamp (epoch ms)
+  int64 until = 2;       // end timestamp (epoch ms)
+  int32 limit = 3;       // max results, default 5000
+}
+
+// List online users response
+message ListOnlineUsersResponse {
+  repeated int64 user_ids = 1;
+}
+
+// List recent offline users request
+message ListRecentOfflineUsersRequest {
+  int64 since = 1;       // start timestamp (epoch ms)
+  int64 until = 2;       // end timestamp (epoch ms)
+  int32 limit = 3;       // max results, default 5000
+}
+
+// List recent offline users response
+message ListRecentOfflineUsersResponse {
+  repeated int64 user_ids = 1;
+}
+
+// ==================== Service ====================
 
 // IM service definition
 service ImService {
@@ -43,4 +99,16 @@ service ImService {
   
   // Get IM token for user
   rpc GetImToken(GetImTokenRequest) returns (GetImTokenResponse);
+  
+  // Generate LiveKit call token
+  rpc GenerateCallToken(GenerateCallTokenRequest) returns (GenerateCallTokenResponse);
+  
+  // Process raw callback from mobile-gateway
+  rpc OnRawCallback(OnRawCallbackRequest) returns (OnRawCallbackResponse);
+  
+  // List users who came online in time window
+  rpc ListOnlineUsers(ListOnlineUsersRequest) returns (ListOnlineUsersResponse);
+  
+  // List users who went offline in time window
+  rpc ListRecentOfflineUsers(ListRecentOfflineUsersRequest) returns (ListRecentOfflineUsersResponse);
 }
