@@ -4,7 +4,7 @@
 spring:
   # PostgreSQL
   datasource:
-    url: jdbc:postgresql://38.76.188.242:5433/putao-dating-dev?currentSchema=post&sslmode=disable
+    url: jdbc:postgresql://38.76.188.242:5433/putao_dating_dev?currentSchema=post&sslmode=disable
     username: jianjian_test
     password: MpR5rGjss2Ly6vJFAhaxAwNqVAGVoP7V
 
@@ -32,6 +32,12 @@ spring:
 app:
   cache:
     key-prefix: putao:post
+  upload:
+    endpoint: https://minio-api.jianjiange.site
+    access-key: admin
+    secret-key: GorLDkuOhGyK5c1RXh2gaPooXgtso/MR
+    bucket: putao-dating-dev
+    path-style-access: true
 
 # RocketMQ Configuration
 rocketmq:
@@ -46,15 +52,6 @@ rocketmq:
 snowflake:
   worker-id: ${SNOWFLAKE_WORKER_ID:2}
   datacenter-id: ${SNOWFLAKE_DATACENTER_ID:1}
-
-# MinIO Configuration
-app:
-  upload:
-    endpoint: https://minio-api.jianjiange.site
-    access-key: admin
-    secret-key: GorLDkuOhGyK5c1RXh2gaPooXgtso/MR
-    bucket: putao-dating-dev
-    path-style-access: true
 
 # Logging
 logging:

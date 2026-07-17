@@ -8,24 +8,28 @@ import com.dating.gateway.service.PostService;
 import com.dating.gateway.vo.CommentVO;
 import com.dating.gateway.vo.PostDetailVO;
 import com.dating.post.proto.PostDetailResponse;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class PostServiceImpl implements PostService {
 
+    private static final Logger log = LoggerFactory.getLogger(PostServiceImpl.class);
+
     private final PostClient postClient;
+
+    public PostServiceImpl(PostClient postClient) {
+        this.postClient = postClient;
+    }
 
     @Override
     public Long createPost(Long userId, CreatePostReq req) {
         try {
-            return postClient.createPost(userId, req.getContent(), req.getImageKeys()).getPostId();
+            return postClient.createPost(req.getContent(), req.getImageKeys()).getPostId();
         } catch (Exception e) {
             log.error("Failed to create post", e);
             throw new GatewayException(10901, "Failed to create post");
@@ -76,7 +80,7 @@ public class PostServiceImpl implements PostService {
     @Override
     public Long createComment(Long userId, Long postId, CreateCommentReq req) {
         try {
-            return postClient.createComment(postId, req.getContent(), null, null).getCommentId();
+            return postClient.createComment(postId, req.getContent(), 0L, 0L).getCommentId();
         } catch (Exception e) {
             log.error("Failed to create comment", e);
             throw new GatewayException(10901, "Failed to create comment");
@@ -152,7 +156,7 @@ public class PostServiceImpl implements PostService {
         vo.setImageKeys(resp.getImageKeysList());
         vo.setLikeCount(resp.getLikeCount());
         vo.setCommentCount(resp.getCommentCount());
-        vo.setIsLiked(resp.getIsLiked());
+        vo.setLiked(resp.getIsLiked());
         vo.setCreatedAtSeconds(resp.getCreatedAt());
         return vo;
     }

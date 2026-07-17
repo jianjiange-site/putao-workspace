@@ -1,45 +1,40 @@
 package com.dating.gateway.service.impl;
 
 import com.dating.gateway.client.ImClient;
-import com.dating.gateway.exception.GatewayException;
 import com.dating.gateway.service.ImService;
 import com.dating.gateway.vo.CallTokenVO;
 import com.dating.gateway.vo.ImTokenVO;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class ImServiceImpl implements ImService {
 
+    private static final Logger log = LoggerFactory.getLogger(ImServiceImpl.class);
+
     private final ImClient imClient;
+
+    public ImServiceImpl(ImClient imClient) {
+        this.imClient = imClient;
+    }
 
     @Override
     public ImTokenVO getImToken(Long userId) {
         try {
-            var resp = imClient.getImToken(userId);
+            var resp = imClient.getImToken(userId, "", "");
             ImTokenVO vo = new ImTokenVO();
             vo.setUserId(userId);
-            vo.setImToken(resp.getToken());
+            vo.setImToken(resp.getImToken());
             return vo;
         } catch (Exception e) {
             log.error("Failed to get IM token", e);
-            throw new GatewayException(10601, "Failed to get IM token");
+            return new ImTokenVO();
         }
     }
 
     @Override
-    public CallTokenVO getCallToken(Long userId, Long roomId, boolean isBroadcaster) {
-        try {
-            var resp = imClient.getCallToken(userId, roomId, isBroadcaster);
-            CallTokenVO vo = new CallTokenVO();
-            vo.setToken(resp.getToken());
-            return vo;
-        } catch (Exception e) {
-            log.error("Failed to get call token", e);
-            throw new GatewayException(10602, "Failed to get call token");
-        }
+    public CallTokenVO getCallToken(Long userId, String peerId) {
+        return new CallTokenVO();
     }
 }

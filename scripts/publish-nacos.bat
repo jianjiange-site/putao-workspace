@@ -32,7 +32,8 @@ $ns = '%NS%'
 $configDir = '%WS%\nacos'
 Get-ChildItem -Path $configDir -Filter '*.yaml' | ForEach-Object {
     $file = $_.FullName
-    $dataId = $_.Name
+    $rawName = $_.BaseName  # e.g. user-service
+    $dataId = 'dating-' + $rawName + '-dev.yaml'  # e.g. dating-user-service-dev.yaml
     $content = Get-Content -Raw $file
     $body = \"dataId=$dataId&group=DEFAULT_GROUP&tenant=$ns&type=yaml&content=$([Uri]::EscapeDataString($content))\"
     $result = Invoke-RestMethod -Uri \"$NACOS/nacos/v1/cs/configs?accessToken=$token\" -Method Post -Body $body

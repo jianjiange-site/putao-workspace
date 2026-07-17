@@ -1,7 +1,9 @@
 package com.dating.gateway.security;
 
+import com.dating.gateway.config.JwtConfig;
 import io.jsonwebtoken.Jwts;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.security.KeyPair;
@@ -13,10 +15,10 @@ import java.util.Map;
 import java.util.UUID;
 
 /** JWT Token Issuer. */
-@Slf4j
 @Component
 public class JwtIssuer {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtIssuer.class);
     private static final String TYPE_CLAIM = "type";
     private static final String DEVICE_ID_CLAIM = "device_id";
     private static final String ACCESS_TYPE = "access";

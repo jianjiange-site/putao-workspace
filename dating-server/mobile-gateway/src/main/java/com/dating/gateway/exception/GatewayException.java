@@ -1,8 +1,5 @@
 package com.dating.gateway.exception;
 
-import lombok.Getter;
-
-@Getter
 public class GatewayException extends RuntimeException {
     private final int code;
 
@@ -15,4 +12,6 @@ public class GatewayException extends RuntimeException {
         super(message, cause);
         this.code = code;
     }
+
+    public int getCode() { return code; }
 }

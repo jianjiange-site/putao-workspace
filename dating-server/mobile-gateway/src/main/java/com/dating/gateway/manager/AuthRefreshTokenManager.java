@@ -1,21 +1,26 @@
 package com.dating.gateway.manager;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dating.gateway.entity.AuthRefreshTokenEntity;
 import com.dating.gateway.mapper.AuthRefreshTokenMapper;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.Optional;
 
-@Slf4j
 @Component
-@RequiredArgsConstructor
 public class AuthRefreshTokenManager {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthRefreshTokenManager.class);
+
     private final AuthRefreshTokenMapper refreshTokenMapper;
+
+    public AuthRefreshTokenManager(AuthRefreshTokenMapper refreshTokenMapper) {
+        this.refreshTokenMapper = refreshTokenMapper;
+    }
 
     public Optional<AuthRefreshTokenEntity> findValidByTokenHash(String tokenHash) {
         return Optional.ofNullable(
@@ -42,16 +47,14 @@ public class AuthRefreshTokenManager {
     }
 
     public void revokeAllForUser(Long userId, String deviceId) {
-        refreshTokenMapper.update(null,
-                new LambdaQueryWrapper<AuthRefreshTokenEntity>()
-                        .eq(AuthRefreshTokenEntity::getUserId, userId)
-                        .eq(AuthRefreshTokenEntity::getDeviceId, deviceId)
-                        .isNull(AuthRefreshTokenEntity::getRevokedAt)
-                        .eq(AuthRefreshTokenEntity::getDeleted, 0)
-                        .allEq(new java.util.HashMap<String, Object>() {{
-                            put("revoked_at", Instant.now());
-                            put("updated_at", Instant.now());
-                        }})
-        );
+        var now = Instant.now();
+        LambdaUpdateWrapper<AuthRefreshTokenEntity> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(AuthRefreshTokenEntity::getUserId, userId)
+                .eq(AuthRefreshTokenEntity::getDeviceId, deviceId)
+                .isNull(AuthRefreshTokenEntity::getRevokedAt)
+                .eq(AuthRefreshTokenEntity::getDeleted, 0)
+                .set(AuthRefreshTokenEntity::getRevokedAt, now)
+                .set(AuthRefreshTokenEntity::getUpdatedAt, now);
+        refreshTokenMapper.update(null, updateWrapper);
     }
 }

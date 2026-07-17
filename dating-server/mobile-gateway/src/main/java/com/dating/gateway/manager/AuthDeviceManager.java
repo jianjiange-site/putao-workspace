@@ -3,16 +3,18 @@ package com.dating.gateway.manager;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dating.gateway.entity.AuthDeviceEntity;
 import com.dating.gateway.mapper.AuthDeviceMapper;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.Optional;
 
 /** Auth Device Manager. */
-@Slf4j
 @Component
 public class AuthDeviceManager {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthDeviceManager.class);
 
     private final AuthDeviceMapper authDeviceMapper;
 

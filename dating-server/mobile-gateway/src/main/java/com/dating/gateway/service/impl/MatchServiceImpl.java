@@ -6,14 +6,17 @@ import com.dating.gateway.dto.SwipeReq;
 import com.dating.gateway.exception.GatewayException;
 import com.dating.gateway.service.MatchService;
 import com.dating.gateway.vo.MatchCardVO;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
-@Slf4j
 @Service
 public class MatchServiceImpl implements MatchService {
+
+    private static final Logger log = LoggerFactory.getLogger(MatchServiceImpl.class);
 
     private final MatchClient matchClient;
 
@@ -24,14 +27,17 @@ public class MatchServiceImpl implements MatchService {
     @Override
     public List<MatchCardVO> getFeed(Long userId, int count) {
         try {
-            return matchClient.getRecommendations(userId, count).stream()
-                    .map(u -> MatchCardVO.builder()
-                            .targetUserId(u.getUserId())
-                            .nickname(u.getNickname())
-                            .age(u.getAge())
-                            .photoKeys(List.of(u.getAvatarKey()))
-                            .build())
-                    .toList();
+            var recommendations = matchClient.getRecommendations(userId, count);
+            List<MatchCardVO> result = new ArrayList<>();
+            for (var u : recommendations) {
+                MatchCardVO vo = new MatchCardVO();
+                vo.setTargetUserId(u.getUserId());
+                vo.setNickname(u.getNickname());
+                vo.setAge(u.getAge());
+                vo.setPhotoKeys(List.of(u.getAvatarKey()));
+                result.add(vo);
+            }
+            return result;
         } catch (Exception e) {
             log.error("Failed to get match feed", e);
             throw new GatewayException(10901, "Failed to get match feed");
@@ -57,5 +63,15 @@ public class MatchServiceImpl implements MatchService {
             log.error("Failed to super hi", e);
             throw new GatewayException(10901, "Failed to super hi");
         }
+    }
+
+    @Override
+    public List<MatchCardVO> getMatches(Long userId) {
+        return List.of();
+    }
+
+    @Override
+    public List<MatchCardVO> getSwipeHistory(Long userId, int pageSize, long cursor) {
+        return List.of();
     }
 }

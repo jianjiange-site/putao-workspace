@@ -1,12 +1,14 @@
 package com.dating.gateway.filter;
 
 import com.dating.gateway.security.JwtVerifier;
+import com.dating.gateway.security.RequestContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -21,22 +23,22 @@ import java.util.UUID;
 /**
  * JWT Authentication Filter.
  */
-@Slf4j
 @Component
 @Order(1)
 public class JwtAuthFilter extends OncePerRequestFilter {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
     private static final String AUTHORIZATION_HEADER = "Authorization";
     private static final String BEARER_PREFIX = "Bearer ";
     private static final String TRACE_ID_HEADER = "X-Trace-ID";
 
     private static final Set<String> PUBLIC_PATHS = Set.of(
-            "/api/v1/auth/send-sms-code",
+            "/api/v1/auth/sms/send",
             "/api/v1/auth/refresh",
-            "/api/v1/auth/login-phone",
-            "/api/v1/auth/login-device",
-            "/api/v1/auth/login-third-party",
-            "/api/v1/health/ping",
+            "/api/v1/auth/login/phone",
+            "/api/v1/auth/login/device",
+            "/api/v1/auth/login/third-party",
+            "/api/v1/health",
             "/swagger-ui",
             "/v3/api-docs",
             "/actuator"

@@ -1,12 +1,9 @@
 package com.dating.gateway.security;
 
-import lombok.Getter;
-
 /**
  * Request Context for holding authenticated user information.
  * Uses ThreadLocal to store request-scoped data.
  */
-@Getter
 public class RequestContext {
 
     private static final ThreadLocal<RequestContext> CONTEXT = new ThreadLocal<>();
@@ -35,4 +32,9 @@ public class RequestContext {
     public static void clear() {
         CONTEXT.remove();
     }
+
+    public Long getUserId() { return userId; }
+    public String getDeviceId() { return deviceId; }
+    public String getTraceId() { return traceId; }
+    public String getAccessJti() { return accessJti; }
 }

@@ -8,7 +8,6 @@ import com.dating.gateway.vo.UserProfileVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -16,10 +15,13 @@ import java.util.List;
 @Tag(name = "Profile", description = "User Profile APIs")
 @RestController
 @RequestMapping("/api/v1/profile")
-@RequiredArgsConstructor
 public class ProfileController {
 
     private final ProfileService profileService;
+
+    public ProfileController(ProfileService profileService) {
+        this.profileService = profileService;
+    }
 
     @GetMapping("/me")
     @Operation(summary = "Get my profile")

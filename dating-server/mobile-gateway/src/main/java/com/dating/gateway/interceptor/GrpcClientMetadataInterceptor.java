@@ -8,16 +8,17 @@ import io.grpc.ClientInterceptor;
 import io.grpc.ForwardingClientCall;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
  * gRPC Client Interceptor for injecting request metadata.
  */
-@Slf4j
 @Component
 public class GrpcClientMetadataInterceptor implements ClientInterceptor {
 
+    private static final Logger log = LoggerFactory.getLogger(GrpcClientMetadataInterceptor.class);
     private static final String USER_ID_KEY = "user_id";
     private static final String DEVICE_ID_KEY = "device_id";
     private static final String TRACE_ID_KEY = "trace_id";

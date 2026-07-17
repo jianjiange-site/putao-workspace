@@ -2,7 +2,8 @@ package com.dating.gateway.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -13,10 +14,10 @@ import java.util.Optional;
 /**
  * JWT Token Verifier.
  */
-@Slf4j
 @Component
 public class JwtVerifier {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtVerifier.class);
     private static final String BLACKLIST_PREFIX = "gateway:auth:blacklist:";
     private static final String TYPE_CLAIM = "type";
     private static final String ACCESS_TYPE = "access";

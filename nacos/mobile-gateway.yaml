@@ -4,7 +4,7 @@
 spring:
   # PostgreSQL
   datasource:
-    url: jdbc:postgresql://38.76.188.242:5433/putao-dating-dev?currentSchema=gateway&sslmode=disable
+    url: jdbc:postgresql://38.76.188.242:5433/putao_dating_dev?currentSchema=gateway&sslmode=disable
     username: jianjian_test
     password: MpR5rGjss2Ly6vJFAhaxAwNqVAGVoP7V
 

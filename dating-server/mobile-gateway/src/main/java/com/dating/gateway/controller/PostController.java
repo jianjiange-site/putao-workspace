@@ -10,7 +10,6 @@ import com.dating.gateway.vo.Result;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,10 +18,13 @@ import java.util.Map;
 @Tag(name = "Post", description = "Post APIs")
 @RestController
 @RequestMapping("/api/v1/posts")
-@RequiredArgsConstructor
 public class PostController {
 
     private final PostService postService;
+
+    public PostController(PostService postService) {
+        this.postService = postService;
+    }
 
     @PostMapping
     @Operation(summary = "Create a post")
@@ -74,8 +76,8 @@ public class PostController {
     @GetMapping("/{postId}/comments")
     @Operation(summary = "List comments")
     public Result<List<CommentVO>> getComments(@PathVariable Long postId,
-                                               @RequestParam(defaultValue = "20") int pageSize,
-                                               @RequestParam(defaultValue = "0") long cursor) {
+                                                @RequestParam(defaultValue = "20") int pageSize,
+                                                @RequestParam(defaultValue = "0") long cursor) {
         return Result.ok(postService.getComments(postId, pageSize, cursor));
     }
 
@@ -90,15 +92,15 @@ public class PostController {
     @GetMapping("/users/{userId}")
     @Operation(summary = "Get user posts")
     public Result<List<PostDetailVO>> getUserPosts(@PathVariable Long userId,
-                                                   @RequestParam(defaultValue = "20") int pageSize,
-                                                   @RequestParam(defaultValue = "0") long cursor) {
+                                                    @RequestParam(defaultValue = "20") int pageSize,
+                                                    @RequestParam(defaultValue = "0") long cursor) {
         return Result.ok(postService.getUserPosts(userId, pageSize, cursor));
     }
 
     @GetMapping("/feed")
     @Operation(summary = "Get recommended feed")
     public Result<List<PostDetailVO>> getFeed(@RequestParam(defaultValue = "20") int pageSize,
-                                              @RequestParam(required = false) String cursor) {
+                                               @RequestParam(required = false) String cursor) {
         Long userId = RequestContext.current().getUserId();
         return Result.ok(postService.getFeed(userId, pageSize, cursor));
     }

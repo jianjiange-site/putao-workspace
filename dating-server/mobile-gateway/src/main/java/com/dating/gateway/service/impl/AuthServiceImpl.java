@@ -2,8 +2,13 @@ package com.dating.gateway.service.impl;
 
 import com.dating.gateway.client.UserClient;
 import com.dating.gateway.config.JwtConfig;
-import com.dating.gateway.dto.*;
+import com.dating.gateway.dto.LoginPhoneReq;
+import com.dating.gateway.dto.LoginThirdPartyReq;
+import com.dating.gateway.dto.OnboardingReq;
+import com.dating.gateway.dto.RefreshTokenReq;
+import com.dating.gateway.dto.SendSmsCodeReq;
 import com.dating.gateway.entity.AuthDeviceEntity;
+import com.dating.gateway.entity.AuthRefreshTokenEntity;
 import com.dating.gateway.manager.AuthDeviceManager;
 import com.dating.gateway.manager.AuthRefreshTokenManager;
 import com.dating.gateway.security.JwtIssuer;
@@ -11,19 +16,21 @@ import com.dating.gateway.security.JwtVerifier;
 import com.dating.gateway.service.AuthService;
 import com.dating.gateway.vo.LoginResultVO;
 import com.dating.gateway.vo.UserProfileVO;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.HexFormat;
-import java.util.Optional;
 
 /** Auth Service Implementation. */
-@Slf4j
 @Service
 public class AuthServiceImpl implements AuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthServiceImpl.class);
 
     private final JwtIssuer jwtIssuer;
     private final JwtVerifier jwtVerifier;
@@ -46,12 +53,12 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public void sendSmsCode(String phone) {
-        log.info("Send SMS code to phone: {}", phone);
+    public void sendSmsCode(SendSmsCodeReq req) {
+        log.info("Send SMS code to phone: {}", req.getPhone());
     }
 
     @Override
-    public LoginResultVO loginByPhone(LoginPhoneReq req) {
+    public LoginResultVO loginPhone(LoginPhoneReq req) {
         log.info("Login by phone: {}", req.getPhone());
         Long userId = System.currentTimeMillis();
         return createLoginResult(userId, req.getDeviceId(), req.getPlatform(),
@@ -59,19 +66,19 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public LoginResultVO loginByDevice(LoginDeviceReq req) {
-        log.info("Login by device: {}", req.getDeviceId());
-        Optional<AuthDeviceEntity> existingDevice = authDeviceManager.findByUserIdAndDeviceId(null, req.getDeviceId());
+    public LoginResultVO loginDevice(String deviceId, Integer platform,
+            String deviceModel, String osVersion, String appVersion, String pushToken) {
+        log.info("Login by device: {}", deviceId);
+        var existingDevice = authDeviceManager.findByUserIdAndDeviceId(null, deviceId);
         if (existingDevice.isEmpty()) {
             throw new RuntimeException("Device not found, please use phone login first");
         }
         Long userId = existingDevice.get().getUserId();
-        return createLoginResult(userId, req.getDeviceId(), req.getPlatform(),
-                req.getDeviceModel(), req.getOsVersion(), req.getAppVersion(), req.getPushToken());
+        return createLoginResult(userId, deviceId, platform, deviceModel, osVersion, appVersion, pushToken);
     }
 
     @Override
-    public LoginResultVO loginByThirdParty(LoginThirdPartyReq req) {
+    public LoginResultVO loginThirdParty(LoginThirdPartyReq req) {
         log.info("Login by third party: {}", req.getThirdPartyPlatform());
         Long userId = System.currentTimeMillis();
         return createLoginResult(userId, req.getDeviceId(), req.getPlatform(),
@@ -79,45 +86,47 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public LoginResultVO refreshToken(String refreshToken) {
+    public LoginResultVO refreshToken(RefreshTokenReq req) {
         log.info("Refresh token");
         throw new RuntimeException("Not implemented");
     }
 
     @Override
-    public void logout(Long userId, String deviceId, String accessJti, long ttlSeconds) {
-        log.info("Logout userId={}, deviceId={}", userId, deviceId);
-        jwtVerifier.blacklist(accessJti, ttlSeconds);
+    public void logout(String refreshToken) {
+        log.info("Logout");
     }
 
     @Override
-    public UserProfileVO completeOnboarding(Long userId, OnboardingReq req) {
+    public void onboarding(Long userId, OnboardingReq req) {
         log.info("Complete onboarding for userId={}", userId);
-        var profile = userClient.updateUserProfile(userId, req.getNickname(), req.getDefaultAvatarObjectKey(), req.getBio());
-        return UserProfileVO.builder()
-                .userId(userId)
-                .nickname(profile.getNickname())
-                .age(profile.getAge())
-                .bio(profile.getBio())
-                .avatar(profile.getAvatarKey())
-                .build();
+        userClient.updateUserProfile(userId, req.getNickname(), req.getBio());
     }
 
     private LoginResultVO createLoginResult(Long userId, String deviceId, Integer platform,
             String deviceModel, String osVersion, String appVersion, String pushToken) {
         authDeviceManager.upsertDevice(userId, deviceId, platform, deviceModel, osVersion, appVersion, pushToken);
-        
+
         JwtIssuer.TokenPair tokens = jwtIssuer.issueTokens(userId, deviceId);
         String tokenHash = hashToken(tokens.refreshToken());
-        authRefreshTokenManager.createRefreshToken(userId, deviceId, tokenHash, tokens.refreshJti(),
-                jwtIssuer.getRefreshTokenExpiry());
 
-        return LoginResultVO.builder()
-                .accessToken(tokens.accessToken())
-                .refreshToken(tokens.refreshToken())
-                .expiresIn(jwtProperties.getAccessTokenExpirySeconds())
-                .userId(userId)
-                .build();
+        AuthRefreshTokenEntity entity = new AuthRefreshTokenEntity();
+        entity.setUserId(userId);
+        entity.setDeviceId(deviceId);
+        entity.setTokenHash(tokenHash);
+        entity.setJti(tokens.refreshJti());
+        entity.setExpiresAt(jwtIssuer.getRefreshTokenExpiry());
+        entity.setCreatedAt(Instant.now());
+        entity.setUpdatedAt(Instant.now());
+        entity.setDeleted(0);
+        authRefreshTokenManager.saveRefreshToken(entity);
+
+        LoginResultVO vo = new LoginResultVO();
+        vo.setAccessToken(tokens.accessToken());
+        vo.setRefreshToken(tokens.refreshToken());
+        vo.setUserId(userId);
+        vo.setAccessExpiresAtMs(Instant.now().plusSeconds(jwtProperties.getAccessTokenExpirySeconds()).toEpochMilli());
+        vo.setRefreshExpiresAtMs(jwtIssuer.getRefreshTokenExpiry().toEpochMilli());
+        return vo;
     }
 
     private String hashToken(String token) {

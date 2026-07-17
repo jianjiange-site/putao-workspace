@@ -3,15 +3,17 @@ package com.dating.gateway.client;
 import com.dating.post.proto.*;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-@Slf4j
 @Component
 public class PostClient {
+
+    private static final Logger log = LoggerFactory.getLogger(PostClient.class);
 
     @Value("${post.service.grpc.host:localhost}")
     private String postServiceHost;

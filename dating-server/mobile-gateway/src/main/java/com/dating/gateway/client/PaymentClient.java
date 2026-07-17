@@ -1,15 +1,15 @@
 package com.dating.gateway.client;
 
-import com.dating.payment.proto.*;
-import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-@Slf4j
+/** Payment Service gRPC Client. Stubbed — payment-service not yet implemented. */
 @Component
 public class PaymentClient {
+
+    private static final Logger log = LoggerFactory.getLogger(PaymentClient.class);
 
     @Value("${payment.service.grpc.host:localhost}")
     private String paymentServiceHost;
@@ -17,24 +17,17 @@ public class PaymentClient {
     @Value("${payment.service.grpc.port:19093}")
     private int paymentServicePort;
 
-    private PaymentServiceGrpc.PaymentServiceBlockingStub createStub() {
-        ManagedChannel channel = ManagedChannelBuilder
-                .forAddress(paymentServiceHost, paymentServicePort)
-                .usePlaintext()
-                .build();
-        return PaymentServiceGrpc.newBlockingStub(channel);
-    }
+    // TODO: implement once payment-service is ready
+    public record GetBalanceResponse(Long userId, Long coins) {}
+    public record PurchaseCoinsResponse(String orderId, Long coins, Long createdAt) {}
 
     public GetBalanceResponse getBalance(Long userId) {
-        log.info("getBalance for userId={}", userId);
-        GetBalanceRequest request = GetBalanceRequest.newBuilder().setUserId(userId).build();
-        return createStub().getBalance(request);
+        log.warn("PaymentClient.getBalance not implemented — returning empty response");
+        return new GetBalanceResponse(userId, 0L);
     }
 
     public PurchaseCoinsResponse purchaseCoins(Long userId, int coinAmount, String paymentMethod) {
-        log.info("purchaseCoins: userId={}, amount={}", userId, coinAmount);
-        PurchaseCoinsRequest request = PurchaseCoinsRequest.newBuilder()
-                .setUserId(userId).setCoinAmount(coinAmount).setPaymentMethod(paymentMethod).build();
-        return createStub().purchaseCoins(request);
+        log.warn("PaymentClient.purchaseCoins not implemented — returning empty response");
+        return new PurchaseCoinsResponse("", 0L, 0L);
     }
 }

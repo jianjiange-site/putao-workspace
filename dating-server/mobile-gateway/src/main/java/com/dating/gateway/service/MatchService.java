@@ -7,6 +7,7 @@ import com.dating.gateway.vo.MatchCardVO;
 import java.util.List;
 
 public interface MatchService {
+    List<MatchCardVO> getFeed(Long userId, int count);
     boolean swipe(Long userId, SwipeReq req);
     boolean superHi(Long userId, SuperHiReq req);
     List<MatchCardVO> getMatches(Long userId);

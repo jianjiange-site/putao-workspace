@@ -10,7 +10,7 @@ import java.time.Duration;
 
 /** Resilience4j Rate Limiter Configuration. */
 @Configuration
-public class RateLimiterConfig {
+public class ResilienceRateLimiterConfig {
 
     @Bean
     public RateLimiterRegistry rateLimiterRegistry() {

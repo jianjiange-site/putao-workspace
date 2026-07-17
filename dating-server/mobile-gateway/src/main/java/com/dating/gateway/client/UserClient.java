@@ -3,7 +3,8 @@ package com.dating.gateway.client;
 import com.dating.user.proto.*;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -12,9 +13,10 @@ import java.util.List;
 /**
  * User Service gRPC Client.
  */
-@Slf4j
 @Component
 public class UserClient {
+
+    private static final Logger log = LoggerFactory.getLogger(UserClient.class);
 
     @Value("${user.service.grpc.host:localhost}")
     private String userServiceHost;
@@ -38,12 +40,11 @@ public class UserClient {
         return createStub().getUserProfile(request);
     }
 
-    public UserProfileResponse updateUserProfile(Long userId, String nickname, String avatarKey, String bio) {
+    public UserProfileResponse updateUserProfile(Long userId, String nickname, String bio) {
         log.info("updateUserProfile called for userId={}", userId);
         UpdateUserProfileRequest.Builder builder = UpdateUserProfileRequest.newBuilder()
                 .setUserId(userId);
         if (nickname != null) builder.setNickname(nickname);
-        if (avatarKey != null) builder.setAvatarKey(avatarKey);
         if (bio != null) builder.setBio(bio);
         return createStub().updateUserProfile(builder.build());
     }

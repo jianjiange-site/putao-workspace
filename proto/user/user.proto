@@ -8,40 +8,145 @@ option java_outer_classname = "UserProto";
 
 import "common/result.proto";
 
-// Get user profile request
+// ============================================================================
+// 公共枚举
+// ============================================================================
+
+// 性别
+enum Gender {
+  GENDER_UNKNOWN = 0;
+  GENDER_MALE = 1;
+  GENDER_FEMALE = 2;
+}
+
+// 平台(iOS/Android/Web) — 与 mobile-gateway 对齐
+enum Platform {
+  PLATFORM_UNKNOWN = 0;
+  PLATFORM_IOS = 1;
+  PLATFORM_ANDROID = 2;
+  PLATFORM_WEB = 3;
+}
+
+// 第三方平台
+enum ThirdPartyPlatform {
+  TP_UNKNOWN = 0;
+  TP_GOOGLE = 1;
+  TP_FACEBOOK = 2;
+  TP_APPLE = 3;
+}
+
+// App 名称(用于 user_login_phone 的 (phone_e164, app_name) 唯一约束)
+enum AppName {
+  APP_UNSPECIFIED = 0;
+  APP_VIBE = 1;          // Vibe 主 App
+}
+
+// 封禁来源 reason 枚举
+enum BanReason {
+  BAN_REASON_NONE = 0;
+  BAN_REASON_USER_BANNED = 1;       // regulation_status IN (2)
+  BAN_REASON_USER_SUSPENDED = 2;    // regulation_status IN (5)
+  BAN_REASON_OPERATIONAL = 3;       // 运营级 Redis Set
+}
+
+// ============================================================================
+// 资料返回 DTO(UserProfileProto 是核心聚合)
+// ============================================================================
+
+// 单张头像
+message AvatarProto {
+  // MVP 三档都填同一 key,展示侧降级到原图
+  string original_key = 1;
+  string min_key = 2;
+  string mid_key = 3;
+}
+
+// 单个兴趣标签
+message UserInterestProto {
+  string tab_key = 1;     // 兴趣大类(如 "music" / "sport")
+  string tag_key = 2;     // 具体标签(如 "rock" / "basketball")
+  string pic_key = 3;     // 图片标签的 object_key;App 自拼 URL
+}
+
+// 用户主资料
+message UserProfileProto {
+  int64 user_id = 1;
+  string nickname = 2;
+  int32 age = 3;
+  Gender gender = 4;
+  string birthday = 5;            // ISO date string, onboarding 写入后不可改
+  string preferred_location = 6;  // 城市文本
+  string bio = 7;
+  string profession = 8;          // 职业(UI: Occupation)
+  string education = 9;
+  int32 height = 10;              // cm, 0=未填
+  string email = 11;
+  int32 regulation_status = 12;   // DB 原值(2/5=封禁/暂停),gateway 自取
+  bool pending = 13;              // placeholder 标记
+  int64 last_open_at_ms = 14;
+
+  // 嵌套
+  AvatarProto avatar = 20;
+  repeated UserInterestProto interests = 21;
+}
+
+// ============================================================================
+// Identity 域
+// ============================================================================
+
+message ResolveOrCreateByPhoneRequest {
+  string phone_e164 = 1;          // libphonenumber 已规范化为 E.164
+  AppName app_name = 2;
+}
+
+message ResolveOrCreateByThirdPartyRequest {
+  ThirdPartyPlatform platform = 1;
+  string third_party_user_id = 2;
+  AppName app_name = 3;
+  string google_email = 4;        // 可选,Google 登录时带回
+}
+
+message ResolveOrCreateByDeviceRequest {
+  string device_id = 1;
+  Platform platform = 2;
+  AppName app_name = 3;
+}
+
+message ResolveOrCreateResponse {
+  int64 user_id = 1;
+  bool pending = 2;               // 是否需要 onboarding
+  bool newly_created = 3;         // 本次是新创建的 placeholder
+}
+
+message CheckBanRequest {
+  int64 user_id = 1;
+}
+
+message BanResult {
+  bool banned = 1;
+  BanReason reason = 2;
+  int64 banned_at_ms = 3;         // 0=无具体时间
+  string message = 4;             // 给用户的多语言提示
+}
+
+// ============================================================================
+// Profile 域
+// ============================================================================
+
 message GetUserProfileRequest {
   int64 user_id = 1;
 }
 
-// User profile response
+// 兼容老字段集(原 proto 已有),保留 user_id/nickname/avatar_key/bio/age/gender/created_at
+// 新版改用 UserProfileProto 返回,见下 BatchGetProfilesRequest
 message UserProfileResponse {
   int64 user_id = 1;
   string nickname = 2;
-  string avatar_key = 3;
+  string avatar_key = 3;          // 原图 key(MVP 等同 original_key)
   string bio = 4;
   int32 age = 5;
-  string gender = 6;
+  string gender = 6;              // 保留原 proto 字符串语义
   string created_at = 7;
-}
-
-// Update user profile request
-message UpdateUserProfileRequest {
-  int64 user_id = 1;
-  string nickname = 2;
-  string avatar_key = 3;
-  string bio = 4;
-}
-
-// User service definition
-service UserService {
-  // Get user profile
-  rpc GetUserProfile(GetUserProfileRequest) returns (UserProfileResponse);
-  
-  // Update user profile
-  rpc UpdateUserProfile(UpdateUserProfileRequest) returns (UserProfileResponse);
-  
-  // Batch get user profiles
-  rpc BatchGetUserProfiles(BatchGetUserProfilesRequest) returns (BatchGetUserProfilesResponse);
 }
 
 message BatchGetUserProfilesRequest {
@@ -50,4 +155,116 @@ message BatchGetUserProfilesRequest {
 
 message BatchGetUserProfilesResponse {
   repeated UserProfileResponse profiles = 1;
+}
+
+// 新版批量(用 UserProfileProto)
+message BatchGetProfilesRequest {
+  repeated int64 user_ids = 1;
+  bool include_interests = 2;     // 默认 true,大批量时关掉省流量
+}
+
+message BatchGetProfilesResponse {
+  repeated UserProfileProto profiles = 1;
+}
+
+// UpdateProfile 仅声明 7 个 MVP 字段
+message UpdateUserProfileRequest {
+  int64 user_id = 1;              // 由 gRPC metadata x-user-id 注入(冗余字段,网关转发时填充)
+  string nickname = 2;            // 长度 ≤ 64
+  int32 age = 3;                  // SMALLINT
+  string preferred_location = 4;  // 长度 ≤ 128
+  string bio = 5;                 // 长度 ≤ 500
+  string occupation = 6;          // 长度 ≤ 128,DB 字段 profession
+  string education = 7;           // 长度 ≤ 128
+  int32 height = 8;               // 单位 cm
+}
+
+// onboarding 一次性写入完整资料
+message UpsertOnboardingRequest {
+  int64 user_id = 1;              // 由 metadata x-user-id 注入
+  string nickname = 2;
+  Gender gender = 3;              // 必填
+  string birthday = 4;            // ISO yyyy-MM-dd,必填
+  string preferred_location = 5;
+  string bio = 6;
+  string profession = 7;
+  string education = 8;
+  int32 height = 9;
+  repeated UserInterestProto interests = 10;
+}
+
+message OnboardingResponse {
+  UserProfileProto profile = 1;
+}
+
+// 兴趣标签全量替换
+message ReplaceUserInterestsRequest {
+  int64 user_id = 1;              // 由 metadata 注入
+  repeated UserInterestProto interests = 2;   // 图片 ≤ 9, 文字 ≤ 50
+}
+
+message ReplaceUserInterestsResponse {
+  int32 count = 1;                // 实际写入数量
+}
+
+// 头像上传 — presigned PUT
+message PresignAvatarUploadRequest {
+  int64 user_id = 1;              // 由 metadata 注入
+  string ext = 2;                 // jpg/jpeg/png/webp
+  int64 size_bytes = 3;           // ≤ 10MB
+}
+
+message PresignAvatarUploadResponse {
+  string presigned_url = 1;
+  string object_key = 2;
+  int64 expires_at_ms = 3;        // 5 min TTL
+}
+
+// 头像上传 — confirm
+message ConfirmAvatarUploadRequest {
+  int64 user_id = 1;              // 由 metadata 注入
+  string object_key = 2;          // 由 presign 接口下发
+}
+
+message ConfirmAvatarUploadResponse {
+  UserProfileProto profile = 1;
+}
+
+// ============================================================================
+// User Service 定义
+// ============================================================================
+
+service UserService {
+  // ---------- Identity ----------
+  // 手机号(短信登录)解析或创建
+  rpc ResolveOrCreateByPhone(ResolveOrCreateByPhoneRequest) returns (ResolveOrCreateResponse);
+  // 第三方授权解析或创建
+  rpc ResolveOrCreateByThirdParty(ResolveOrCreateByThirdPartyRequest) returns (ResolveOrCreateResponse);
+  // 设备快速登录解析或创建
+  rpc ResolveOrCreateByDevice(ResolveOrCreateByDeviceRequest) returns (ResolveOrCreateResponse);
+  // 查询用户封禁状态
+  rpc CheckBan(CheckBanRequest) returns (BanResult);
+
+  // ---------- Profile ----------
+  // 单用户读取,默认返回主资料 + 兴趣 + 头像
+  rpc GetProfile(GetUserProfileRequest) returns (UserProfileProto);
+  // 批量读取(≤200/次),Redis miss 后批量 DB 回填
+  rpc BatchGetProfile(BatchGetProfilesRequest) returns (BatchGetProfilesResponse);
+
+  // 旧版接口(沿用,字段集简化)— 兼容 post-service 已有调用
+  rpc GetUserProfile(GetUserProfileRequest) returns (UserProfileResponse);
+  rpc UpdateUserProfile(UpdateUserProfileRequest) returns (UserProfileResponse);
+  rpc BatchGetUserProfiles(BatchGetUserProfilesRequest) returns (BatchGetUserProfilesResponse);
+
+  // 资料编辑(动态 SET,跳过 null 字段),仅 7 个 MVP 字段
+  rpc UpdateProfile(UpdateUserProfileRequest) returns (UserProfileProto);
+  // onboarding 一次性写入
+  rpc UpsertOnboarding(UpsertOnboardingRequest) returns (OnboardingResponse);
+
+  // 兴趣标签全量替换
+  rpc ReplaceUserInterests(ReplaceUserInterestsRequest) returns (ReplaceUserInterestsResponse);
+
+  // 头像上传两阶段
+  rpc PresignAvatarUpload(PresignAvatarUploadRequest) returns (PresignAvatarUploadResponse);
+  rpc ConfirmAvatarUpload(ConfirmAvatarUploadRequest) returns (ConfirmAvatarUploadResponse);
 }

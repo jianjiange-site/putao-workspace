@@ -9,7 +9,9 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 
 /** JWT Configuration. */
@@ -30,7 +32,16 @@ public class JwtConfig {
                 PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(privateKeyBytes);
                 KeyFactory keyFactory = KeyFactory.getInstance("RSA");
                 RSAPrivateKey privateKey = (RSAPrivateKey) keyFactory.generatePrivate(keySpec);
-                return new KeyPair(privateKey.getPublic(), privateKey);
+                
+                RSAPublicKey publicKey;
+                if (properties.getPublicKeyBase64() != null && !properties.getPublicKeyBase64().isEmpty()) {
+                    byte[] publicKeyBytes = Base64.getDecoder().decode(properties.getPublicKeyBase64());
+                    X509EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(publicKeyBytes);
+                    publicKey = (RSAPublicKey) keyFactory.generatePublic(publicKeySpec);
+                } else {
+                    throw new IllegalStateException("publicKeyBase64 is required when privateKeyBase64 is provided");
+                }
+                return new KeyPair(publicKey, privateKey);
             } catch (Exception e) {
                 throw new RuntimeException("Failed to load JWT key pair", e);
             }
