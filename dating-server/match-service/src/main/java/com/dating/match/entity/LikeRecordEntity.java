@@ -1,0 +1,48 @@
+package com.dating.match.entity;
+
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableLogic;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.Instant;
+
+/**
+ * Like 记录实体.
+ *
+ * <p>SUPER_HI / 互划即时 match 不落 like_record(没有"暗恋"窗口).
+ */
+@Data
+@TableName("like_record")
+public class LikeRecordEntity {
+
+    @TableId(type = IdType.ASSIGN_ID)
+    private Long id;
+
+    private Long fromUserId;
+
+    private Long toUserId;
+
+    /** 1=BH 2=DH */
+    private Integer fromUserType;
+
+    /** 1=SWIPE_RIGHT 2=DH_PLAN_ONLINE 3=DH_PLAN_OFFLINE */
+    private Integer source;
+
+    /** DH 任务携带的文案;真人 swipe 为 NULL */
+    private String likeContent;
+
+    private Instant likedAt;
+
+    @TableField(fill = FieldFill.INSERT)
+    private Instant createdAt;
+
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private Instant updatedAt;
+
+    @TableLogic
+    private Boolean deleted;
+}

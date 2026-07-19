@@ -35,6 +35,13 @@ spring:
         password: ${NACOS_PASSWORD:jianjiange}
         file-extension: yaml
         group: DEFAULT_GROUP
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    placeholder-replacement: false
+    table: flyway_history_match
 
 grpc:
   server:

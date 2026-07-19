@@ -8,54 +8,252 @@ option java_outer_classname = "PaymentProto";
 
 import "common/result.proto";
 
-// Get balance request
+// =====================================================================
+// Payment Channel
+// =====================================================================
+
+enum PaymentChannel {
+  PAYMENT_CHANNEL_UNSPECIFIED = 0;
+  PAYPAL = 1;
+  APPLE_IAP = 2;
+  GOOGLE_BILLING = 3;
+  STRIPE = 4;
+}
+
+// =====================================================================
+// Order Status (V5 added GRANTED)
+// =====================================================================
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  INIT = 1;     // 下单建好,等用户付款
+  PAID = 2;     // 第三方确认收款
+  GRANTED = 3;  // 金币/订阅权益已发放
+  FAILED = 4;   // 支付失败
+}
+
+enum RefundStatus {
+  REFUND_STATUS_UNSPECIFIED = 0;
+  REFUND_NONE = 1;
+  REFUND_PARTIAL = 2;
+  REFUND_FULL = 3;
+}
+
+// =====================================================================
+// Subscription Tier (对齐 match-service 档位)
+// =====================================================================
+
+enum SubscriptionTier {
+  SUBSCRIPTION_TIER_UNSPECIFIED = 0;
+  FREE = 1;
+  WEEKLY = 2;
+  MONTHLY = 3;
+  YEARLY = 4;
+}
+
+enum SubscriptionSource {
+  SUBSCRIPTION_SOURCE_UNSPECIFIED = 0;
+  IAP_APPLE = 1;
+  IAP_GOOGLE = 2;
+  SRC_PAYPAL = 3;
+  SRC_STRIPE = 4;
+  ADMIN = 5;
+  TEST = 6;
+}
+
+// =====================================================================
+// Create Order
+// =====================================================================
+
+message CreateOrderRequest {
+  int64 user_id = 1;
+  string product_id = 2;
+  PaymentChannel channel = 3;
+  string return_url = 4;  // PayPal 跳转回跳地址(Web 端)
+}
+
+message CreateOrderResponse {
+  int32 code = 1;
+  string message = 2;
+  string order_id = 3;
+  string status = 4;          // INIT / PAID / GRANTED / FAILED
+  string ext_order_id = 5;   // PayPal order id
+  string checkout_url = 6;    // PayPal approval link
+}
+
+// =====================================================================
+// Verify Payment (客户端付完主动确认)
+// =====================================================================
+
+message VerifyPaymentRequest {
+  int64 user_id = 1;
+  string order_id = 2;        // 业务订单号
+  string ext_order_id = 3;    // PayPal order id (PAYPAL 通道时必填)
+}
+
+message VerifyPaymentResponse {
+  int32 code = 1;
+  string message = 2;
+  string order_id = 3;
+  string status = 4;
+}
+
+// =====================================================================
+// Balance / Coins
+// =====================================================================
+
 message GetBalanceRequest {
   int64 user_id = 1;
 }
 
-// Get balance response
 message GetBalanceResponse {
   int64 user_id = 1;
-  int64 coins = 2;
+  int64 coins = 2;            // 免费 + 付费 之和
+  int64 free_coins = 3;       // 免费币
+  int64 paid_coins = 4;       // 付费币
 }
 
-// Purchase coins request
+message AddCoinsRequest {
+  int64 user_id = 1;
+  int32 amount = 2;
+  string reason = 3;
+  string idempotent_key = 4;
+}
+
+message AddCoinsResponse {
+  int32 code = 1;
+  string message = 2;
+  int64 balance_after = 3;
+}
+
+message AddPaidCoinsRequest {
+  int64 user_id = 1;
+  int32 amount = 2;
+  string reason = 3;
+  string idempotent_key = 4;
+}
+
+message AddPaidCoinsResponse {
+  int32 code = 1;
+  string message = 2;
+  int64 paid_balance_after = 3;
+}
+
+message ConsumeCoinsRequest {
+  int64 user_id = 1;
+  int32 amount = 2;
+  string idempotent_key = 3;  // 兼容旧字段名 idempotent_key
+  string description = 4;
+}
+
+message ConsumeCoinsResponse {
+  bool success = 1;
+  int32 code = 2;             // 0=OK, 3001=Insufficient, 4001=参数错误
+  string message = 3;
+  int64 balance_after = 4;
+}
+
+// =====================================================================
+// Coin Ledger
+// =====================================================================
+
+message GetCoinLedgerRequest {
+  int64 user_id = 1;
+  int32 page = 2;             // 1-based
+  int32 page_size = 3;
+}
+
+message CoinLedgerEntry {
+  int64 id = 1;
+  int64 user_id = 2;
+  string type = 3;            // INCOME / EXPENSE
+  int64 amount = 4;
+  int64 paid_amount = 5;
+  int64 balance_after = 6;
+  int64 paid_balance_after = 7;
+  string reason = 8;
+  string extra = 9;           // JSON
+  int64 created_at = 10;
+}
+
+message GetCoinLedgerResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated CoinLedgerEntry entries = 3;
+  int32 total = 4;
+  int32 page = 5;
+  int32 page_size = 6;
+}
+
+// =====================================================================
+// Subscription
+// =====================================================================
+
+message GetSubscriptionRequest {
+  int64 user_id = 1;
+}
+
+message GetSubscriptionResponse {
+  int32 code = 1;
+  string message = 2;
+  SubscriptionTier tier = 3;
+  bool is_active = 4;
+  int64 expires_at = 5;       // epoch ms, 0=无订阅
+}
+
+message ActivateSubscriptionRequest {
+  int64 user_id = 1;
+  SubscriptionTier tier = 2;
+  int32 duration_days = 3;
+  SubscriptionSource source = 4;
+}
+
+message ActivateSubscriptionResponse {
+  int32 code = 1;
+  string message = 2;
+  SubscriptionTier tier = 3;
+  int64 expires_at = 4;
+}
+
+// =====================================================================
+// Purchase Coins (legacy)
+// =====================================================================
+
 message PurchaseCoinsRequest {
   int64 user_id = 1;
   int32 coin_amount = 2;
   string payment_method = 3;
 }
 
-// Purchase coins response
 message PurchaseCoinsResponse {
   string order_id = 1;
   int64 coins = 2;
   int64 created_at = 3;
 }
 
-// Payment service definition
+// =====================================================================
+// Service Definition
+// =====================================================================
+
 service PaymentService {
-  // Get user balance
+  // 支付下单链路
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+  rpc VerifyPayment(VerifyPaymentRequest) returns (VerifyPaymentResponse);
+
+  // 余额查询(兼容旧 API,返回 free+paid 之和)
   rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
 
-  // Purchase coins
+  // 购买金币(legacy)
   rpc PurchaseCoins(PurchaseCoinsRequest) returns (PurchaseCoinsResponse);
 
-  // Consume coins (for chat message charge)
+  // 金币
+  rpc GetCoins(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc AddCoins(AddCoinsRequest) returns (AddCoinsResponse);
+  rpc AddPaidCoins(AddPaidCoinsRequest) returns (AddPaidCoinsResponse);
   rpc ConsumeCoins(ConsumeCoinsRequest) returns (ConsumeCoinsResponse);
-}
+  rpc GetCoinLedger(GetCoinLedgerRequest) returns (GetCoinLedgerResponse);
 
-// Consume coins request
-message ConsumeCoinsRequest {
-  int64 user_id = 1;
-  int32 amount = 2;
-  string idempotent_key = 3;
-  string description = 4;
-}
-
-// Consume coins response
-message ConsumeCoinsResponse {
-  bool success = 1;
-  int32 code = 2;
-  string message = 3;
+  // 订阅
+  rpc GetSubscription(GetSubscriptionRequest) returns (GetSubscriptionResponse);
+  rpc ActivateSubscription(ActivateSubscriptionRequest) returns (ActivateSubscriptionResponse);
 }

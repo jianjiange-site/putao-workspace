@@ -271,6 +271,12 @@ service UserService {
   // ---------- IM Service 专用 ----------
   // 获取用户类型(BH真人/DH数字人)
   rpc GetUserType(GetUserTypeRequest) returns (GetUserTypeResponse);
+
+  // ---------- Match Service 专用 ----------
+  // DH 召回(范围过滤 + exclude)
+  rpc ListDhCandidates(ListDhCandidatesRequest) returns (ListDhCandidatesResponse);
+  // 附近 BH 召回(基于 GEO)
+  rpc NearbyUsers(NearbyUsersRequest) returns (NearbyUsersResponse);
 }
 
 // 用户类型
@@ -289,4 +295,70 @@ message GetUserTypeRequest {
 message GetUserTypeResponse {
   int64 user_id = 1;
   UserType user_type = 2;
+}
+
+// ============================================================================
+// Match Service 专用召回接口(7.7)
+// ============================================================================
+
+// DH 召回(支持范围过滤 + exclude_user_ids)
+message ListDhCandidatesRequest {
+  int32 target_gender = 1;        // 1=MALE 2=FEMALE
+  int32 age_min = 2;
+  int32 age_max = 3;
+  int32 beauty_min = 4;
+  int32 beauty_max = 5;
+  repeated string races = 6;      // 优先人种,空 = 不限
+  repeated int64 exclude_user_ids = 7;  // 已 swipe / 已 match / 已 like 等
+  int32 limit = 8;                // 通常 240,上限 500
+}
+
+message ListDhCandidatesResponse {
+  repeated DhCandidate candidates = 1;
+}
+
+// 单个 DH 候选(返回字段必须含 created_at / beauty_score / age / race / gender)
+message DhCandidate {
+  int64 user_id = 1;
+  int32 age = 2;
+  int32 gender = 3;               // 1=MALE 2=FEMALE
+  string race = 4;
+  int32 beauty_score = 5;
+  int64 created_at_ms = 6;        // 用于 new_bh 排序 / bonus
+  string nickname = 7;            // 可选,有些场景不需要
+  string avatar_key = 8;          // 可选
+  string preferred_location = 9;
+  double distance_km = 10;        // DH 通常无距离,服务端可填 0
+}
+
+// 附近真人召回(BH 池),基于地理位置(GEO)
+message NearbyUsersRequest {
+  int64 user_id = 1;              // 调用方,用于中心点 + 排除自身
+  double radius_km = 2;           // 半径,默认 100km(D0) / 200km(D1)
+  int32 age_min = 3;
+  int32 age_max = 4;
+  int32 beauty_min = 5;
+  int32 beauty_max = 6;
+  repeated string races = 7;
+  int32 last_active_within_days = 8;  // 仅召回 N 天内活跃的 BH
+  repeated int64 exclude_user_ids = 9;
+  int32 limit = 10;
+}
+
+message NearbyUsersResponse {
+  repeated BhCandidate candidates = 1;
+}
+
+message BhCandidate {
+  int64 user_id = 1;
+  int32 age = 2;
+  int32 gender = 3;
+  string race = 4;
+  int32 beauty_score = 5;
+  int64 created_at_ms = 6;
+  int64 last_active_at_ms = 7;
+  string nickname = 8;
+  string avatar_key = 9;
+  string preferred_location = 10;
+  double distance_km = 11;
 }

@@ -10,7 +10,6 @@ import "common/result.proto";
 
 // ==================== Message ====================
 
-// Send message request
 message SendMessageRequest {
   int64 sender_id = 1;
   int64 receiver_id = 2;
@@ -18,47 +17,79 @@ message SendMessageRequest {
   string message_type = 4;
 }
 
-// Send message response
 message SendMessageResponse {
   string message_id = 1;
   int64 created_at = 2;
 }
 
+// ==================== System Message ====================
+
+// 发送系统消息(配对通知等)
+message SendSystemMessageRequest {
+  int64 to_user_id = 1;
+  string content = 2;       // 业务消息内容(JSON)
+  string message_type = 3;  // 业务消息类型,如 "MATCH_CREATED"
+}
+
+message SendSystemMessageResponse {
+  string message_id = 1;
+  int64 created_at = 2;
+}
+
+// ==================== Conversation ====================
+
+// 确保会话存在(幂等建会话)
+message EnsureConversationRequest {
+  int64 user_id_a = 1;
+  int64 user_id_b = 2;
+}
+
+message EnsureConversationResponse {
+  string conversation_id = 1;
+  bool created = 2;   // true=本次新建 / false=已存在
+}
+
+// DH 主动开场白触发(配对后由 match-service 触发)
+message TriggerDhOpeningRequest {
+  int64 dh_user_id = 1;
+  int64 target_user_id = 2;
+  string conversation_id = 3;
+}
+
+message TriggerDhOpeningResponse {
+  bool accepted = 1;
+  string message_id = 2;   // DH 发送的第一条消息 id(异步生成)
+}
+
 // ==================== Token ====================
 
-// Get IM token request
 message GetImTokenRequest {
   int64 user_id = 1;
   string nickname = 2;
   string avatar_key = 3;
 }
 
-// Get IM token response
 message GetImTokenResponse {
   string im_token = 1;
   int64 expire_seconds = 2;
 }
 
-// Generate call token request (LiveKit)
 message GenerateCallTokenRequest {
   int64 user_id = 1;
-  string peer_id = 2;
+  int64 peer_id = 2;
 }
 
-// Generate call token response
 message GenerateCallTokenResponse {
   string token = 1;
 }
 
 // ==================== Callback ====================
 
-// On raw callback request (from mobile-gateway)
 message OnRawCallbackRequest {
   string provider = 1;    // openim/tencent
   bytes payload = 2;      // raw JSON
 }
 
-// On raw callback response
 message OnRawCallbackResponse {
   int32 code = 1;        // 0=allow, non-zero=reject
   string message = 2;
@@ -66,49 +97,55 @@ message OnRawCallbackResponse {
 
 // ==================== Presence ====================
 
-// List online users request
+// 列出指定时间窗内新建立 OpenIM 会话的真人用户(读 im:presence:online ZSet)
+// match-service OnlinePlanGenerator(6.3.1)用
 message ListOnlineUsersRequest {
-  int64 since = 1;       // start timestamp (epoch ms)
-  int64 until = 2;       // end timestamp (epoch ms)
-  int32 limit = 3;       // max results, default 5000
+  int64 since = 1;       // epoch ms,闭区间下界
+  int64 until = 2;       // epoch ms,开区间上界
+  int32 limit = 3;       // 默认 5000,上限 50000
 }
 
-// List online users response
 message ListOnlineUsersResponse {
   repeated int64 user_ids = 1;
 }
 
-// List recent offline users request
+// 列出最近下线的真人用户(读 user_online_session)
+// match-service OfflinePlanGenerator(6.3.2)用
 message ListRecentOfflineUsersRequest {
-  int64 since = 1;       // start timestamp (epoch ms)
-  int64 until = 2;       // end timestamp (epoch ms)
-  int32 limit = 3;       // max results, default 5000
+  int64 since = 1;       // epoch ms,闭区间下界
+  int64 until = 2;       // epoch ms,开区间上界
+  int32 limit = 3;       // 默认 5000
 }
 
-// List recent offline users response
 message ListRecentOfflineUsersResponse {
   repeated int64 user_ids = 1;
 }
 
 // ==================== Service ====================
 
-// IM service definition
 service ImService {
   // Send message
   rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
-  
+
+  // System message
+  rpc SendSystemMessage(SendSystemMessageRequest) returns (SendSystemMessageResponse);
+
+  // Conversation
+  rpc EnsureConversation(EnsureConversationRequest) returns (EnsureConversationResponse);
+  rpc TriggerDhOpening(TriggerDhOpeningRequest) returns (TriggerDhOpeningResponse);
+
   // Get IM token for user
   rpc GetImToken(GetImTokenRequest) returns (GetImTokenResponse);
-  
+
   // Generate LiveKit call token
   rpc GenerateCallToken(GenerateCallTokenRequest) returns (GenerateCallTokenResponse);
-  
+
   // Process raw callback from mobile-gateway
   rpc OnRawCallback(OnRawCallbackRequest) returns (OnRawCallbackResponse);
-  
+
   // List users who came online in time window
   rpc ListOnlineUsers(ListOnlineUsersRequest) returns (ListOnlineUsersResponse);
-  
+
   // List users who went offline in time window
   rpc ListRecentOfflineUsers(ListRecentOfflineUsersRequest) returns (ListRecentOfflineUsersResponse);
 }

@@ -8,44 +8,224 @@ option java_outer_classname = "MatchProto";
 
 import "common/result.proto";
 
-// Match request
-message MatchRequest {
-  int64 from_user_id = 1;
-  int64 to_user_id = 2;
-  string action = 3; // like, super_like, pass
+// =====================================================================
+// 公共枚举
+// =====================================================================
+
+// 划卡方向
+enum SwipeDirection {
+  SWIPE_DIRECTION_UNSPECIFIED = 0;
+  LEFT = 1;
+  RIGHT = 2;
+  // SUPER_HI 走独立 RPC(SuperHiReq),不放在这里
 }
 
-// Match response
-message MatchResponse {
-  bool is_matched = 1;
-  string match_id = 2;
+// 用户类型
+enum TargetUserType {
+  TARGET_USER_TYPE_UNSPECIFIED = 0;
+  BH = 1;  // Biological Human
+  DH = 2;  // Digital Human
 }
 
-// Get recommendations request
-message GetRecommendationsRequest {
+// 订阅档位(对齐 payment)
+enum MatchSubscriptionTier {
+  MATCH_SUBSCRIPTION_TIER_UNSPECIFIED = 0;
+  FREE = 1;
+  WEEKLY = 2;
+  MONTHLY = 3;
+  YEARLY = 4;
+}
+
+// match.source 入口动作维度(与 BH/DH 正交,BH/DH 由 user_id 反查)
+enum MatchSource {
+  MATCH_SOURCE_UNSPECIFIED = 0;
+  SWIPE_MATCH = 1;     // BH 互划 / DH 延迟回调,用户视角都是"和你匹配了"
+  SWIPE_SUPER_HI = 2;  // 首页 Super Hi
+}
+
+// =====================================================================
+// 1. GetTodayFeed - 拉当日 feed
+// =====================================================================
+
+message GetTodayFeedReq {
   int64 user_id = 1;
-  int32 limit = 2;
+  int32 count = 2;   // ≤ 20,App 默认 5
 }
 
-// Get recommendations response
-message GetRecommendationsResponse {
-  repeated RecommendedUser users = 1;
+message GetTodayFeedResp {
+  repeated Card cards = 1;
+  bool exhausted = 2;   // true=今日配额耗尽 / 队列无新候选,App 展示"今日已看完"
 }
 
-message RecommendedUser {
-  int64 user_id = 1;
-  string nickname = 2;
-  string avatar_key = 3;
+message Card {
+  int64 target_user_id = 1;
+  TargetUserType target_user_type = 2;
+  string nickname = 3;
   int32 age = 4;
-  string gender = 5;
-  double similarity_score = 6;
+  repeated string photo_keys = 5;   // object_key,前端自拼 CDN URL
+  string bio = 6;
+  double distance_km = 7;           // BH 才有,DH = -1
+  // 不下发 score / beauty_score / race,避免泄露
 }
 
-// Match service definition
+// =====================================================================
+// 2. Swipe - 提交一次划卡
+// =====================================================================
+
+message SwipeReq {
+  int64 user_id = 1;
+  int64 target_user_id = 2;
+  SwipeDirection direction = 3;     // LEFT / RIGHT
+}
+
+message SwipeResp {
+  // match_id > 0 仅在 BH 互划即时匹配场景;LEFT / 单向 RIGHT / DH 延迟均 = 0
+  int64 match_id = 2;
+  reserved 1, 3, 4;
+  reserved "matched", "remaining_right_swipes", "remaining_cards";
+}
+
+// =====================================================================
+// 3. SuperHi - Super Hi(独立 RPC,语义不同于普通 swipe)
+// =====================================================================
+
+message SuperHiReq {
+  int64 user_id = 1;
+  int64 target_user_id = 2;
+}
+
+message SuperHiResp {
+  // SuperHi 对 BH / DH 都立即创建 match;0 仅出现在幂等回放场景
+  int64 match_id = 2;
+  // 用了金币才有值(订阅赠送时为 0)
+  int32 coins_used = 4;
+  reserved 1, 3, 5, 6;
+  reserved "matched", "remaining_super_hi", "remaining_right_swipes", "remaining_cards";
+}
+
+// =====================================================================
+// 4. ListMatches - 我的 match 列表
+// =====================================================================
+
+message ListMatchesReq {
+  int64 user_id = 1;
+  int32 page_size = 2;     // ≤ 50
+  string page_token = 3;   // 透传 last_matched_at_ms:match_id
+}
+
+message ListMatchesResp {
+  repeated MatchVO matches = 1;
+  string next_page_token = 2;
+}
+
+message MatchVO {
+  int64 match_id = 1;
+  int64 partner_user_id = 2;
+  string partner_nickname = 3;
+  repeated string partner_photo_keys = 4;
+  int64 matched_at_unix_ms = 5;
+  string source = 6;   // SWIPE_MATCH / SWIPE_SUPER_HI / ...(入口动作)
+}
+
+// =====================================================================
+// 5. GetQuota - 当前配额
+// =====================================================================
+
+message GetQuotaReq {
+  int64 user_id = 1;
+}
+
+message GetQuotaResp {
+  int32 daily_right_swipe_limit = 1;
+  int32 daily_right_swipe_used  = 2;
+  int32 daily_card_limit        = 3;
+  int32 daily_card_used         = 4;
+  int32 daily_super_hi_limit    = 5;   // 订阅赠送上限
+  int32 daily_super_hi_used     = 6;
+  int32 super_hi_coin_price     = 7;   // 100
+  string subscription_tier      = 8;   // FREE / WEEKLY / MONTHLY / YEARLY
+}
+
+// =====================================================================
+// 6. ListLikesOfMe - 谁 like 了我
+// =====================================================================
+
+message ListLikesOfMeReq {
+  int64 user_id = 1;
+  int32 page_size = 2;     // ≤ 50
+  string page_token = 3;
+}
+
+message ListLikesOfMeResp {
+  repeated LikeVO likes = 1;
+  string next_page_token = 2;
+  int32 total_unread = 3;
+}
+
+message LikeVO {
+  int64 from_user_id = 1;          // liker
+  string nickname = 2;
+  int32 age = 3;
+  repeated string photo_keys = 4;
+  int64 liked_at_unix_ms = 5;
+  string like_content = 6;         // DH 任务携带的文案;真人 swipe 为空
+  // 不下发 from_user_type / source —— 对外屏蔽 BH/DH 差异
+}
+
+// =====================================================================
+// 7. ListVisitsOfMe - 谁访问了我
+// =====================================================================
+
+message ListVisitsOfMeReq {
+  int64 user_id = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListVisitsOfMeResp {
+  repeated VisitVO visits = 1;
+  string next_page_token = 2;
+  int32 total_unread = 3;
+}
+
+message VisitVO {
+  int64 from_user_id = 1;          // visitor
+  string nickname = 2;
+  int32 age = 3;
+  repeated string photo_keys = 4;
+  int64 visited_at_unix_ms = 5;
+  int32 visit_count = 6;           // 同 visitor → viewer 累积访问次数
+}
+
+// =====================================================================
+// 8. RecordVisit - 上报主页访问(异步落 visit_record)
+// =====================================================================
+
+message RecordVisitReq {
+  int64 viewer_user_id = 1;
+  int64 target_user_id = 2;
+}
+
+message RecordVisitResp {
+  bool ok = 1;   // ok 仅表示已收;实际落库异步,失败仅打 WARN
+}
+
+// =====================================================================
+// Service 定义
+// =====================================================================
+
 service MatchService {
-  // Perform match action
-  rpc MatchAction(MatchRequest) returns (MatchResponse);
-  
-  // Get recommended users
-  rpc GetRecommendations(GetRecommendationsRequest) returns (GetRecommendationsResponse);
+  // Feed 队列
+  rpc GetTodayFeed(GetTodayFeedReq) returns (GetTodayFeedResp);
+  // 划卡
+  rpc Swipe(SwipeReq) returns (SwipeResp);
+  rpc SuperHi(SuperHiReq) returns (SuperHiResp);
+  // match 列表
+  rpc ListMatches(ListMatchesReq) returns (ListMatchesResp);
+  // 配额
+  rpc GetQuota(GetQuotaReq) returns (GetQuotaResp);
+  // Like / Visit
+  rpc ListLikesOfMe(ListLikesOfMeReq) returns (ListLikesOfMeResp);
+  rpc ListVisitsOfMe(ListVisitsOfMeReq) returns (ListVisitsOfMeResp);
+  rpc RecordVisit(RecordVisitReq) returns (RecordVisitResp);
 }
