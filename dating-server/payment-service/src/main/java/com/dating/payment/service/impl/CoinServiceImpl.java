@@ -48,6 +48,7 @@ public class CoinServiceImpl implements CoinService {
             Optional<CoinLedgerEntity> existing = coinLedgerManager.findByIdempotencyKey(userId, key);
             if (existing.isPresent()) {
                 log.info("AddCoins idempotent hit: userId={}, key={}", userId, key);
+                // 返回新的余额
                 return existing.get().getBalanceAfter();
             }
         }
@@ -56,12 +57,15 @@ public class CoinServiceImpl implements CoinService {
         int retryCount = 0;
         while (retryCount < 3) {
             try {
+                // 获取或创建账户
                 CoinAccountEntity account = coinAccountManager.getOrCreate(userId);
+                // 计算新余额
                 long newBalance = account.getBalance() + amount;
 
                 // 3. 保存流水
                 CoinLedgerEntity ledger = buildLedger(userId, CoinLedgerType.INCOME, amount, 0,
                         newBalance, 0L, reason, key);
+                // 保存流水
                 ledger = coinLedgerManager.saveWithIdempotencyCheck(ledger, userId, key);
 
                 // 4. 更新余额
@@ -124,13 +128,16 @@ public class CoinServiceImpl implements CoinService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ConsumeResult consumeCoins(Long userId, int amount, String key, String desc) {
+        // 如果金额小于等于 0，则返回错误
         if (amount <= 0) {
             return new ConsumeResult(false, 4001, "Invalid amount", 0);
         }
 
         // 1. 幂等检查
         if (key != null && !key.isBlank()) {
+            // 查找幂等键
             Optional<CoinLedgerEntity> existing = coinLedgerManager.findByIdempotencyKey(userId, key);
+            // 如果存在，则返回之前的余额
             if (existing.isPresent()) {
                 log.info("ConsumeCoins idempotent hit: userId={}, key={}", userId, key);
                 CoinLedgerEntity prev = existing.get();
@@ -143,7 +150,9 @@ public class CoinServiceImpl implements CoinService {
         int retryCount = 0;
         while (retryCount < 3) {
             try {
+                // 获取或创建账户
                 CoinAccountEntity account = coinAccountManager.getOrCreate(userId);
+                // 计算总余额
                 long totalBalance = account.getBalance() + account.getPaidBalance();
 
                 // 3. 余额不足
@@ -157,18 +166,24 @@ public class CoinServiceImpl implements CoinService {
                 long freeTake = Math.min(amount, account.getBalance());
                 long paidTake = amount - freeTake;
 
+                // 计算新免费余额
                 long newFreeBalance = account.getBalance() - freeTake;
+                // 计算新付费余额
                 long newPaidBalance = account.getPaidBalance() - paidTake;
 
                 // 5. 保存流水
+                // 构建流水，参数（用户 ID，类型，免费金额，付费金额，新免费余额，新付费余额，描述，幂等键）
                 CoinLedgerEntity ledger = buildLedger(userId, CoinLedgerType.EXPENSE,
                         -freeTake, -paidTake, newFreeBalance, newPaidBalance, desc, key);
+                // 保存流水
                 ledger = coinLedgerManager.saveWithIdempotencyCheck(ledger, userId, key);
 
-                // 6. 更新余额
+                // 6. 更新余额，参数（用户 ID，免费余额，付费余额）
                 coinAccountManager.updateBalance(userId, newFreeBalance, newPaidBalance);
 
+                // 计算新总余额
                 long newTotalBalance = newFreeBalance + newPaidBalance;
+                // 记录日志
                 log.info("ConsumeCoins success: userId={}, amount={}, newTotal={}", userId, amount, newTotalBalance);
                 return ConsumeResult.ok(newTotalBalance);
             } catch (OptimisticLockingFailureException e) {

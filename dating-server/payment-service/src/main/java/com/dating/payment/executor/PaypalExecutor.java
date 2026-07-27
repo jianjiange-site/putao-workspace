@@ -117,10 +117,12 @@ public class PaypalExecutor {
      */
     public PayPalOrderResult createOrder(String orderId, BigDecimal amount,
                                         String productName, String returnUrl) {
+        // 检查 PayPal 是否已配置
         if (!isConfigured()) {
             throw new IllegalStateException("PayPal not configured");
         }
 
+        // 获取 access token
         String accessToken = getAccessToken();
         String url = getBaseUrl() + "/v2/checkout/orders";
 
@@ -147,8 +149,11 @@ public class PaypalExecutor {
                 }
                 """.formatted(
                     orderId,
+                    // 转义 JSON 字符串
                     escapeJson(productName),
+                    // 金额
                     amount.setScale(2).toPlainString(),
+                    // 跳转 URL
                     escapeJson(returnUrl != null ? returnUrl : ""),
                     escapeJson(returnUrl != null ? returnUrl : "")
             );
@@ -157,20 +162,25 @@ public class PaypalExecutor {
         }
 
         try {
+            // 设置请求头
             HttpHeaders headers = new HttpHeaders();
             headers.set("Authorization", "Bearer " + accessToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
 
+            // 设置请求体
             HttpEntity<String> request = new HttpEntity<>(requestBody, headers);
+            // 发送请求
             var response = restTemplate.postForEntity(url, request, String.class);
 
             JsonNode root = objectMapper.readTree(response.getBody());
+            // 获取状态
             String status = root.get("status").asText();
 
+            // 如果状态不是 CREATED 或 PENDING，则抛出异常
             if (!"CREATED".equals(status) && !"PENDING".equals(status)) {
                 log.warn("PayPal createOrder unexpected status: {}", status);
             }
-
+            // 获取外部订单 ID
             String extOrderId = root.get("id").asText();
 
             // 找到 approval URL
@@ -212,13 +222,17 @@ public class PaypalExecutor {
         String url = getBaseUrl() + "/v2/checkout/orders/" + extOrderId + "/capture";
 
         try {
+            // 设置请求头
             HttpHeaders headers = new HttpHeaders();
             headers.set("Authorization", "Bearer " + accessToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
 
+            // 设置请求体
             HttpEntity<String> request = new HttpEntity<>("{}", headers);
+            // 发送请求
             var response = restTemplate.postForEntity(url, request, String.class);
-
+            // 获取状态
+            // 解析响应体
             JsonNode root = objectMapper.readTree(response.getBody());
             String status = root.get("status").asText();
 

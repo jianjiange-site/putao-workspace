@@ -160,6 +160,131 @@ fix(payment-service): 修复金币消费幂等 key 与并发的竞争
 
 ---
 
+## Spring Boot 配置 / Nacos 接入规范（强制）
+
+> 这一章是启动期踩坑最多的地方。新建任何服务前先把本节读完。
+
+### 1. 配置分层原则
+
+- **application.yml 写死**：端口、应用名、`spring.config.import`、nacos 客户端连接信息（server-addr/namespace/账号）、grpc 端口、snowflake id、key 前缀、MyBatis-Plus 配置、logging 格式
+- **Nacos DataID 写**：敏感信息（数据库 URL/账号/密码、Redis 密码、JWT key、RocketMQ 凭据、对象存储 secret）、外部服务地址
+- **绝不在 application.yml 写数据库密码或第三方密钥**（红线 #4）
+
+### 2. Nacos 接入样板（application.yml 必备项，复制即可）
+
+```yaml
+server:
+  port: ${<SERVICE>_PORT:18XXX}
+
+spring:
+  application:
+    name: dating-<service>-service        # 必须带 dating- 前缀
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  config:
+    import: "optional:nacos:dating-<service>-service-dev.yaml"   # 注意带 -dev 后缀
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 2
+      connection-init-sql: SET TIME ZONE 'UTC'                    # 强制 UTC
+  data:
+    redis:
+      timeout: 3s
+  cloud:
+    nacos:
+      discovery:                                                  # ⚠️ 两段都要写
+        enabled: true
+        server-addr: ${NACOS_SERVER_ADDR:38.76.188.242:8848}
+        namespace: ${NACOS_NAMESPACE:putao-dating-dev}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:jianjiange}
+      config:                                                     # ⚠️ 不能漏
+        enabled: true
+        import-check:
+          enabled: true
+        server-addr: ${NACOS_SERVER_ADDR:38.76.188.242:8848}
+        namespace: ${NACOS_NAMESPACE:putao-dating-dev}
+        username: ${NACOS_USERNAME:nacos}
+        password: ${NACOS_PASSWORD:jianjiange}
+        file-extension: yaml
+        group: DEFAULT_GROUP
+
+app:
+  cache:
+    key-prefix: putao:<service>                                    # ⚠️ 必须带服务名
+```
+
+### 3. 三大高频踩坑（**漏一个就启动失败**）
+
+| # | 错误写法 | 现象 | 正确写法 |
+|---|----------|------|----------|
+| **A** | 只写 `spring.cloud.nacos.discovery.server-addr`，**漏写** `spring.cloud.nacos.config.server-addr` | config client 连 `127.0.0.1:9848` 反复超时，DataId 拉到的 content 是空 → DataSource/Redis 全部没法创建 | 两个 server-addr 都必须写，且 namespace/账号/密码也要**完整复制**一份到 config 节点 |
+| **B** | 在 application.yml 里**硬编码 datasource.url** | 本地能起，但 dev 环境连 localhost 错乱；且密码进 git | url/username/password 全部放 Nacos，application.yml 只留 `driver-class-name` + `hikari` + `connection-init-sql` |
+| **C** | application.yml 写 `spring.application.name: <service>` 而不是 `dating-<service>-service` | 服务注册到 Nacos 时名字跟其他服务不一致，网关/gRPC discovery 找不到 | 全服务统一 `dating-<service>-service` 命名 |
+
+### 4. Nacos 上 DataId 命名约定
+
+- 格式：`dating-<service>-service-dev.yaml`（**带 -dev 后缀**，跟 group=DEFAULT_GROUP 配套）
+- Namespace：**`putao-dating-dev`**（葡萄的统一 namespace，dash 不是下划线）
+- Group：**`DEFAULT_GROUP`**（不要自定义）
+- 文件扩展名：`yaml`
+
+### 5. Nacos DataID 必须包含的字段
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://38.76.188.242:5433/putao_dating_dev?currentSchema=<service>&sslmode=disable   # ⚠️ currentSchema 是服务名
+    username: jianjian_test
+    password: <Nacos 上，不进 git>
+  data:
+    redis:
+      host: 38.76.188.242
+      port: 6380
+      password: <Nacos 上>
+      database: 1
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 0
+    placeholder-replacement: false
+```
+
+### 6. DB 命名约定（容易混）
+
+- **库名（PG database）**：`putao_dating_dev`（**下划线**）
+- **Schema**：`putao_dating_dev` 库下的 `<service>` 子 schema（`user` / `im` / `post` / `match` / `payment` / `gateway`），**不是 public**
+- **Nacos namespace**：又是 dash：`putao-dating-dev`
+- 三者关系：URL `jdbc:postgresql://...:5433/putao_dating_dev?currentSchema=<service>`，Nacos `tenant=putao-dating-dev`
+
+### 7. 启动前自检 Checklist（启动失败时按顺序看）
+
+1. `spring.cloud.nacos.config.server-addr` 写了没？（踩坑 A）
+2. Nacos 上 `dating-<service>-service-dev.yaml` 这个 DataId 是否存在？内容是否非空？
+3. PG 库 `putao_dating_dev` 里 `currentSchema` 指定的 schema 是否已建（Flyway 会自动建，但要先保证 URL 带 `currentSchema`）
+4. Redis 端口 `6380`、密码、database=`1` 是否齐
+5. Flyway 历史表是否停留在 failed 状态（需要 DROP schema 重建）
+
+### 8. 复制现有服务时 application.yml 改哪 4 处
+
+复制 `<existing-service>` → `<new-service>` 时只改这 4 个地方，其他全部保留：
+
+1. `server.port` 默认值
+2. `spring.application.name`
+3. `spring.config.import` 里的 DataId
+4. `app.cache.key-prefix`（`putao:<service>`）
+
+**改完先按上面 7 项 Checklist 跑一遍再启动**。
+
+---
+
 ## Vibe-Coding 文档组织规范
 
 ### 目录结构

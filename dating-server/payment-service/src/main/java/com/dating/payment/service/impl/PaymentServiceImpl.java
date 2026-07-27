@@ -132,16 +132,22 @@ public class PaymentServiceImpl implements PaymentService {
         // 3. PayPal 主动 capture
         if (PaymentChannel.PAYPAL.equals(order.getPaymentChannel())) {
             try {
+                // 获取有效的外部订单 ID
                 String effectiveExtOrderId = extOrderId != null ? extOrderId : order.getExtTransactionId();
                 boolean captured = paypalExecutor.captureOrder(effectiveExtOrderId);
 
                 if (captured) {
+                    // 推进订单状态到 PAID
                     advanceToPaid(orderId);
+                    // 发放奖励
                     grantReward(orderId, "PayPal");
                 }
             } catch (PaymentBizException e) {
+                // 如果捕获失败，则推进订单状态到 FAILED
                 if (e.getCode() == PaymentErrorCode.PAYPAL_CAPTURE_FAILED) {
+                    // 推进订单状态到 FAILED
                     advanceToFailed(orderId, e.getMessage());
+                    // 抛出异常
                 }
                 throw e;
             }
@@ -159,20 +165,24 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("handlePayPalWebhook: eventType={}, orderId={}", eventType, orderId);
 
         switch (eventType) {
+            // 捕获完成
             case "PAYMENT.CAPTURE.COMPLETED" -> {
+                // 推进订单状态到 PAID
                 advanceToPaid(orderId);
+                // 发放奖励
                 grantReward(orderId, "PayPal");
             }
+            // 订单批准
             case "CHECKOUT.ORDER.APPROVED" -> {
                 // 兜底自动 capture
-                if (extOrderId != null) {
-                    try {
-                        paypalExecutor.captureOrder(extOrderId);
-                    } catch (Exception e) {
-                        log.warn("Auto capture failed: extOrderId={}", extOrderId, e);
-                    }
+                // 如果外部订单 ID 不为空，则尝试捕获订单
+                try {
+                    paypalExecutor.captureOrder(extOrderId);
+                } catch (Exception e) {
+                    log.warn("Auto capture failed: extOrderId={}", extOrderId, e);
                 }
             }
+            // 默认情况
             default -> log.debug("Unhandled PayPal event: {}", eventType);
         }
     }
@@ -228,12 +238,15 @@ public class PaymentServiceImpl implements PaymentService {
         }
 
         // 幂等锚点
+        // 如果订单状态为 GRANTED，则直接返回
         if (OrderStatus.GRANTED.equals(order.getStatus())) {
             log.info("grantReward already granted: orderId={}", orderId);
             return;
         }
 
+        // 获取商品
         ProductVO product = productInfoService.getProduct(order.getProductId());
+        // 如果商品不存在，则直接返回
         if (product == null) {
             log.error("grantReward product not found: productId={}", order.getProductId());
             return;
@@ -243,14 +256,19 @@ public class PaymentServiceImpl implements PaymentService {
 
         // 1. 订阅商品：先激活/续期订阅
         if (productInfoService.isSubscriptionProduct(product.getProductId())) {
+            // 获取订阅等级
             int tier = product.getSubscriptionTier();
             int days = product.getSubscriptionDays();
+            // 激活订阅
             subscriptionService.activateSubscription(userId, tier, days, source);
         }
 
         // 2. 发付费金币
+        // 添加付费金币
         coinService.addPaidCoins(userId, product.getCoins(),
+                // 描述
                 "Purchase: " + product.getName(),
+                // 订单 ID
                 "order:" + orderId);
 
         // 3. 标记 GRANTED

@@ -1,5 +1,5 @@
-# Nacos Data ID: match-service.yaml
-# Namespace: putao_dating_dev
+# Nacos Data ID: dating-match-service-dev.yaml
+# Namespace: putao-dating-dev
 
 spring:
   # PostgreSQL

@@ -390,11 +390,12 @@ public class FeedService {
 
         long now = System.currentTimeMillis() / 1000;
         for (PostEntity post : recentPosts) {
+            //从内存中获取帖子基础计数（点赞数和评论数）
             int[] counts = baseCounts.getOrDefault(post.getPostId(), new int[]{0, 0});
             int baseLikes = counts[0];
             int baseComments = counts[1];
 
-            // Redis 实时增量补偿
+            // 从 Redis 获取实时增量计数（点赞数和评论数）
             int likeIncr = postStatManager.getRedisIncr(post.getPostId(), "likes");
             int commentIncr = postStatManager.getRedisIncr(post.getPostId(), "comments");
             int likes = baseLikes + likeIncr;

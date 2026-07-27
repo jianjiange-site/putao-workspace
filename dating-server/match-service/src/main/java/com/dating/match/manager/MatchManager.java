@@ -53,6 +53,31 @@ public class MatchManager {
     }
 
     /**
+     * 显式带日志的插入:成功 / 已存在都打 ERROR,符合 PRD 5.3 报警要求.
+     */
+    public InsertResult insertIgnoreConflictWithLog(long userA, long userB, String source) {
+        long[] pair = pair(userA, userB);
+        MatchEntity entity = new MatchEntity();
+        entity.setUserIdLow(pair[0]);
+        entity.setUserIdHigh(pair[1]);
+        entity.setSource(source);
+        entity.setMatchedAt(Instant.now());
+        try {
+            matchMapper.insert(entity);
+            return new InsertResult(true, entity, null);
+        } catch (DuplicateKeyException e) {
+            MatchEntity existing = matchMapper.findByPair(pair[0], pair[1]);
+            log.error("Duplicate match attempt: pair=({}, {}) existing_id={} existing_source={} new_source={} "
+                            + "── 上游召回过滤可能存在 bug,排查 user_swipe_history 与召回 exclude_user_ids 链路",
+                    pair[0], pair[1],
+                    existing != null ? existing.getId() : null,
+                    existing != null ? existing.getSource() : null,
+                    source);
+            return new InsertResult(false, existing, existing);
+        }
+    }
+
+    /**
      * 插入(无 IGNORE,冲突会抛异常).
      */
     public void insert(MatchEntity entity) {
@@ -81,5 +106,13 @@ public class MatchManager {
      */
     public static long[] pair(long a, long b) {
         return a < b ? new long[]{a, b} : new long[]{b, a};
+    }
+
+    /**
+     * 插入结果封装.
+     *
+     * <p>success=true 表示新插入;success=false 表示触发 UNIQUE(已存在).
+     */
+    public record InsertResult(boolean success, MatchEntity match, MatchEntity existing) {
     }
 }

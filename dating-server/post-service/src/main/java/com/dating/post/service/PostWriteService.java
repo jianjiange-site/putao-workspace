@@ -5,7 +5,6 @@ import com.dating.post.config.SnowflakeIdConfig;
 import com.dating.post.constant.RedisKey;
 import com.dating.post.manager.PostManager;
 import com.dating.post.mq.producer.PostFanoutProducer;
-import com.dating.post.vo.PostDetailVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -13,9 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * PostWriteService.
@@ -36,34 +33,28 @@ public class PostWriteService {
     /**
      * 创建帖子.
      *
+     * <p>事务边界只覆盖 DB 写入（posts、post_images、post_stats），
+     * Redis 缓存、冷启动池、MQ 发送均在事务外独立执行，失败不影响发帖结果。
+     *
      * @param userId 用户ID
      * @param content 内容(1-1024字符)
      * @param imageKeys 图片key列表(最多9张)
      * @return postId
      */
-    @Transactional(rollbackFor = Exception.class)
     public long createPost(Long userId, String content, List<String> imageKeys) {
-        // 1. 入口校验已在 GrpcService 层做了
-
-        // 2. 生成雪花ID
+        // 1. 生成雪花ID（不占事务）
         long postId = snowflakeIdGenerator.nextId();
 
-        // 3. 插入 posts 表
-        postManager.createPost(postId, userId, content);
+        // 2. DB 写入（事务边界内）
+        doCreatePost(postId, userId, content, imageKeys);
 
-        // 4. 插入 post_images 表
-        postManager.saveImages(postId, imageKeys);
-
-        // 5. 初始化 post_stats
-        postManager.initStats(postId);
-
-        // 6. 缓存帖子详情
+        // 3. 缓存帖子详情（事务外，失败不回滚）
         cachePostDetail(postId, userId, content, imageKeys);
 
-        // 7. 加入冷启动池
+        // 4. 加入冷启动池（事务外，失败不回滚）
         addToColdStartPool(postId, userId);
 
-        // 8. 发 RocketMQ 消息做写扩散
+        // 5. 发 RocketMQ 消息做写扩散（事务外，失败不回滚）
         sendFanoutMessage(postId, userId);
 
         log.info("Post created: postId={} userId={} images={}", postId, userId,
@@ -72,17 +63,31 @@ public class PostWriteService {
     }
 
     /**
+     * DB 写入，事务边界.
+     */
+    @Transactional(rollbackFor = Exception.class)
+    void doCreatePost(long postId, Long userId, String content, List<String> imageKeys) {
+        postManager.createPost(postId, userId, content);
+        postManager.saveImages(postId, imageKeys);
+        postManager.initStats(postId);
+    }
+
+    /**
      * 缓存帖子详情到 Redis.
      */
     private void cachePostDetail(Long postId, Long userId, String content, List<String> imageKeys) {
-        String key = RedisKey.postDetail(postId);
-        stringRedisTemplate.opsForHash().put(key, "userId", String.valueOf(userId));
-        stringRedisTemplate.opsForHash().put(key, "content", content);
-        stringRedisTemplate.opsForHash().put(key, "createdAt", String.valueOf(Instant.now().getEpochSecond()));
-        if (imageKeys != null && !imageKeys.isEmpty()) {
-            stringRedisTemplate.opsForHash().put(key, "imageKeys", String.join(",", imageKeys));
+        try {
+            String key = RedisKey.postDetail(postId);
+            stringRedisTemplate.opsForHash().put(key, "userId", String.valueOf(userId));
+            stringRedisTemplate.opsForHash().put(key, "content", content);
+            stringRedisTemplate.opsForHash().put(key, "createdAt", String.valueOf(Instant.now().getEpochSecond()));
+            if (imageKeys != null && !imageKeys.isEmpty()) {
+                stringRedisTemplate.opsForHash().put(key, "imageKeys", String.join(",", imageKeys));
+            }
+            stringRedisTemplate.expire(key, Duration.ofDays(7));
+        } catch (Exception e) {
+            log.warn("Failed to cache post detail: postId={} error={}", postId, e.getMessage());
         }
-        stringRedisTemplate.expire(key, Duration.ofDays(7));
     }
 
     /**
