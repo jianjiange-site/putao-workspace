@@ -1,0 +1,4 @@
+interface:
+  display_name: "服务业务文档生成"
+  short_description: "Generate code-level and business-flow service docs"
+  default_prompt: "Use $generate-service-business-docs to analyze a service and generate code-level and natural-language business documentation."

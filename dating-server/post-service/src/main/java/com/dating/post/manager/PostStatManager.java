@@ -1,23 +1,22 @@
 package com.dating.post.manager;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.dating.post.constant.RedisKey;
 import com.dating.post.entity.PostStatEntity;
 import com.dating.post.mapper.PostStatMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
- * PostStat Manager.
- *
- * <p>负责 post_stat 增量更新.
+ * 帖子统计底座 + Redis 点赞增量.
  */
 @Slf4j
 @Component
@@ -27,164 +26,67 @@ public class PostStatManager {
     private final PostStatMapper postStatMapper;
     private final StringRedisTemplate stringRedisTemplate;
 
-    /**
-     * 获取帖子计数(含Redis增量).
-     *
-     * @param postId 帖子ID
-     * @return [likeCount, commentCount]
-     */
     public int[] getCounts(Long postId) {
-        // 1. 从DB获取基准值
         PostStatEntity stat = postStatMapper.selectById(postId);
         int baseLikes = stat != null ? stat.getLikeCount() : 0;
         int baseComments = stat != null ? stat.getCommentCount() : 0;
-
-        // 2. 从Redis获取增量
-        String likeIncrKey = com.dating.post.constant.RedisKey.likeIncr(postId);
-        String commentIncrKey = com.dating.post.constant.RedisKey.commentIncr(postId);
-
-        String likeIncrStr = stringRedisTemplate.opsForValue().get(likeIncrKey);
-        String commentIncrStr = stringRedisTemplate.opsForValue().get(commentIncrKey);
-
-        int likeIncr = likeIncrStr != null ? Integer.parseInt(likeIncrStr) : 0;
-        int commentIncr = commentIncrStr != null ? Integer.parseInt(commentIncrStr) : 0;
-
-        return new int[]{baseLikes + likeIncr, baseComments + commentIncr};
+        try {
+            return new int[]{
+                    baseLikes + getRedisIncr(postId, "likes"),
+                    baseComments
+            };
+        } catch (Exception e) {
+            log.warn("Read like increment failed, use DB base: postId={} error={}",
+                    postId, e.getMessage());
+            return new int[]{baseLikes, baseComments};
+        }
     }
 
-    /**
-     * 获取基础点赞数(不含Redis增量).
-     *
-     * @param postId 帖子ID
-     * @return 基础点赞数
-     */
-    public int getBaseLikeCount(Long postId) {
-        PostStatEntity stat = postStatMapper.selectById(postId);
-        return stat != null ? stat.getLikeCount() : 0;
-    }
-
-    /**
-     * 获取基础评论数(不含Redis增量).
-     *
-     * @param postId 帖子ID
-     * @return 基础评论数
-     */
-    public int getBaseCommentCount(Long postId) {
-        PostStatEntity stat = postStatMapper.selectById(postId);
-        return stat != null ? stat.getCommentCount() : 0;
-    }
-
-    /**
-     * 批量获取基础计数.
-     *
-     * @param postIds postId列表
-     * @return postId -> [likeCount, commentCount] 映射
-     */
     public Map<Long, int[]> batchGetBaseCounts(List<Long> postIds) {
         if (postIds == null || postIds.isEmpty()) {
             return Collections.emptyMap();
         }
-
-        List<PostStatEntity> stats = postStatMapper.selectList(
-                new LambdaQueryWrapper<PostStatEntity>().in(PostStatEntity::getPostId, postIds));
-        return stats.stream()
-                .collect(java.util.stream.Collectors.toMap(
+        return postStatMapper.selectList(
+                        new LambdaQueryWrapper<PostStatEntity>()
+                                .in(PostStatEntity::getPostId, postIds))
+                .stream()
+                .collect(Collectors.toMap(
                         PostStatEntity::getPostId,
-                        stat -> new int[]{stat.getLikeCount(), stat.getCommentCount()}
-                ));
+                        stat -> new int[]{stat.getLikeCount(), stat.getCommentCount()}));
     }
 
-    /**
-     * 增量更新点赞数(用于LikeFlushJob).
-     *
-     * @param postId 帖子ID
-     * @param delta 增量(可为负数)
-     */
     public void incrementLikeCount(Long postId, int delta) {
-        if (delta == 0) {
-            return;
+        if (delta != 0) {
+            postStatMapper.incrementLikeCount(postId, delta);
         }
-
-        LambdaQueryWrapper<PostStatEntity> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(PostStatEntity::getPostId, postId);
-
-        PostStatEntity update = new PostStatEntity();
-        update.setLikeCount(delta); // MyBatis-Plus 的 update 方法会用表达式
-        update.setUpdatedAt(Instant.now());
-
-        // 使用原生SQL更新
-        postStatMapper.update(null,
-                new LambdaQueryWrapper<PostStatEntity>()
-                        .eq(PostStatEntity::getPostId, postId)
-                        .apply("like_count = like_count + " + delta));
-
-        log.debug("Incremented like count: postId={} delta={}", postId, delta);
     }
 
-    /**
-     * 增量更新评论数(用于CommentFlushJob).
-     *
-     * @param postId 帖子ID
-     * @param delta 增量(可为负数)
-     */
     public void incrementCommentCount(Long postId, int delta) {
-        if (delta == 0) {
-            return;
+        if (delta != 0) {
+            postStatMapper.incrementCommentCount(postId, delta);
         }
-
-        postStatMapper.update(null,
-                new LambdaQueryWrapper<PostStatEntity>()
-                        .eq(PostStatEntity::getPostId, postId)
-                        .apply("comment_count = comment_count + " + delta));
-
-        log.debug("Incremented comment count: postId={} delta={}", postId, delta);
     }
 
     /**
-     * Redis INCR 点赞增量.
-     *
-     * @param postId 帖子ID
-     * @param delta 增量(+1/-1)
+     * INCRBY + EXPIRE + SADD dirty set 在 Redis 内原子执行.
      */
     public void incrRedisLike(Long postId, int delta) {
-        String key = com.dating.post.constant.RedisKey.likeIncr(postId);
-        if (delta > 0) {
-            stringRedisTemplate.opsForValue().increment(key, delta);
-        } else {
-            stringRedisTemplate.opsForValue().decrement(key, Math.abs(delta));
-        }
-        stringRedisTemplate.expire(key, 7, TimeUnit.DAYS);
+        String script = "redis.call('INCRBY', KEYS[1], ARGV[1]); " +
+                "redis.call('EXPIRE', KEYS[1], ARGV[2]); " +
+                "redis.call('SADD', KEYS[2], ARGV[3]); return 1;";
+        stringRedisTemplate.execute(
+                new DefaultRedisScript<>(script, Long.class),
+                List.of(RedisKey.likeIncr(postId), RedisKey.likeUpdatedSet()),
+                String.valueOf(delta),
+                String.valueOf(7 * 24 * 60 * 60),
+                String.valueOf(postId));
     }
 
-    /**
-     * Redis INCR 评论增量.
-     *
-     * @param postId 帖子ID
-     * @param delta 增量(+1/-1)
-     */
-    public void incrRedisComment(Long postId, int delta) {
-        String key = com.dating.post.constant.RedisKey.commentIncr(postId);
-        if (delta > 0) {
-            stringRedisTemplate.opsForValue().increment(key, delta);
-        } else {
-            stringRedisTemplate.opsForValue().decrement(key, Math.abs(delta));
-        }
-        stringRedisTemplate.expire(key, 7, TimeUnit.DAYS);
-    }
-
-    /**
-     * 获取Redis增量值.
-     *
-     * @param postId 帖子ID
-     * @param type "likes" 或 "comments"
-     * @return 增量值
-     */
     public int getRedisIncr(Long postId, String type) {
-        String key = type.equals("likes")
-                ? com.dating.post.constant.RedisKey.likeIncr(postId)
-                : com.dating.post.constant.RedisKey.commentIncr(postId);
-
-        String value = stringRedisTemplate.opsForValue().get(key);
-        return value != null ? Integer.parseInt(value) : 0;
+        if (!"likes".equals(type)) {
+            return 0;
+        }
+        String value = stringRedisTemplate.opsForValue().get(RedisKey.likeIncr(postId));
+        return value == null ? 0 : Integer.parseInt(value);
     }
 }

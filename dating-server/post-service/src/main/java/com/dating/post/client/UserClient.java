@@ -1,155 +1,127 @@
 package com.dating.post.client;
 
+import com.dating.post.constant.RedisKey;
+import com.dating.user.proto.BatchGetProfilesRequest;
 import com.dating.user.proto.BatchGetUserProfilesRequest;
-import com.dating.user.proto.BatchGetUserProfilesResponse;
+import com.dating.user.proto.Gender;
+import com.dating.user.proto.GetUserProfileRequest;
+import com.dating.user.proto.UserProfileProto;
 import com.dating.user.proto.UserProfileResponse;
 import com.dating.user.proto.UserServiceGrpc;
-import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
- * User Service Client.
- *
- * <p>调用 user-service gRPC 接口获取用户信息.
- *
- * <p>关键约束:
- * <ul>
- *   <li>本服务不缓存 user-service 返回的资料到 Redis</li>
- *   <li>但允许本地短 TTL Caffeine 缓存(30秒)用于性别查询</li>
- *   <li>user-service 不可用时降级:getFriendUserIds 返空,isMale 默认 false</li>
- * </ul>
+ * user-service gRPC Client.
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class UserClient {
 
-    @Value("${user.service.grpc.host:localhost}")
-    private String userServiceHost;
+    private static final Duration GENDER_REDIS_TTL = Duration.ofHours(6);
 
-    @Value("${user.service.grpc.port:19090}")
-    private int userServicePort;
-
-    private UserServiceGrpc.UserServiceBlockingStub createStub() {
-        ManagedChannel channel = ManagedChannelBuilder
-                .forAddress(userServiceHost, userServicePort)
-                .usePlaintext()
-                .build();
-        return UserServiceGrpc.newBlockingStub(channel);
-    }
+    private final UserServiceGrpc.UserServiceBlockingStub userServiceStub;
+    private final StringRedisTemplate stringRedisTemplate;
 
     /**
-     * 获取用户的好友 user_id 列表.
-     *
-     * <p>用于发帖时做写扩散.
-     * user-service 不可用时返回空列表.
-     *
-     * @param userId 用户ID
-     * @return 好友 user_id 列表
+     * user proto 目前还没有好友列表 RPC；保留扩散接口边界，未接通前返回空。
      */
     public List<Long> getFriendUserIds(Long userId) {
-        try {
-            // TODO: 等 user-service 实现好友列表接口后替换
-            // 目前返回空列表作为桩实现
-            log.debug("getFriendUserIds called for userId={}, returning empty list (stub)", userId);
-            return Collections.emptyList();
-        } catch (Exception e) {
-            log.warn("Failed to get friend user ids, userId={}, error={}", userId, e.getMessage());
-            return Collections.emptyList();
-        }
+        log.debug("getFriendUserIds is not available in user.proto: userId={}", userId);
+        return Collections.emptyList();
     }
 
     /**
-     * 判断用户是否为男性.
-     *
-     * <p>用于 Feed 池分桶.
-     * 命中 Caffeine 30秒缓存.
-     * user-service 不可用时默认返回 false(归到女性池,可接受).
-     *
-     * @param userId 用户ID
-     * @return true=男 / false=女
+     * L1 Caffeine -> L2 Redis -> user-service.
      */
-    @Cacheable(value = "userGender", key = "#userId", unless = "#result == null")
+    @Cacheable(value = "userGender", key = "#userId")
     public Boolean isMale(Long userId) {
+        String cacheKey = RedisKey.userGender(userId);
         try {
-            // TODO: 等 user-service 实现性别字段后替换
-            // 暂时用 userId % 2 == 0 作为测试
-            boolean isMale = userId % 2 == 0;
-            log.debug("isMale for userId={}, result={} (stub)", userId, isMale);
-            return isMale;
+            String cached = stringRedisTemplate.opsForValue().get(cacheKey);
+            if (cached != null) {
+                return "1".equals(cached);
+            }
+            UserProfileProto profile = userServiceStub.getProfile(
+                    GetUserProfileRequest.newBuilder().setUserId(userId).build());
+            boolean male = profile.getGender() == Gender.GENDER_MALE;
+            stringRedisTemplate.opsForValue().set(
+                    cacheKey, male ? "1" : "0", GENDER_REDIS_TTL);
+            return male;
         } catch (Exception e) {
-            log.warn("Failed to get gender, userId={}, fallback to false, error={}", userId, e.getMessage());
+            log.warn("Get user gender failed, fallback to female bucket: userId={} error={}",
+                    userId, e.getMessage());
             return false;
         }
     }
 
-    /**
-     * 批量获取用户性别.
-     *
-     * <p>用于 FeedScoreJob 重建池时避免 RPC 风暴.
-     * 命中 Caffeine 30秒缓存.
-     *
-     * @param userIds 用户ID列表
-     * @return userId -> isMale 映射
-     */
     public Map<Long, Boolean> getGenders(List<Long> userIds) {
         if (userIds == null || userIds.isEmpty()) {
-            return Collections.emptyMap();
+            return Map.of();
         }
+        Map<Long, Boolean> result = new HashMap<>();
+        List<Long> misses = userIds.stream()
+                .filter(userId -> {
+                    String cached = stringRedisTemplate.opsForValue()
+                            .get(RedisKey.userGender(userId));
+                    if (cached == null) {
+                        return true;
+                    }
+                    result.put(userId, "1".equals(cached));
+                    return false;
+                })
+                .toList();
 
-        try {
-            // TODO: 等 user-service 实现批量获取性别后替换
-            // 暂时用 userId % 2 == 0 作为测试
-            return userIds.stream()
-                    .collect(Collectors.toMap(
-                            userId -> userId,
-                            userId -> userId % 2 == 0
-                    ));
-        } catch (Exception e) {
-            log.warn("Failed to get genders for {} users, fallback to all female, error={}",
-                    userIds.size(), e.getMessage());
-            return userIds.stream()
-                    .collect(Collectors.toMap(
-                            userId -> userId,
-                            userId -> false
-                    ));
+        if (!misses.isEmpty()) {
+            try {
+                var response = userServiceStub.batchGetProfile(
+                        BatchGetProfilesRequest.newBuilder()
+                                .addAllUserIds(misses)
+                                .setIncludeInterests(false)
+                                .build());
+                for (UserProfileProto profile : response.getProfilesList()) {
+                    boolean male = profile.getGender() == Gender.GENDER_MALE;
+                    result.put(profile.getUserId(), male);
+                    stringRedisTemplate.opsForValue().set(
+                            RedisKey.userGender(profile.getUserId()),
+                            male ? "1" : "0",
+                            GENDER_REDIS_TTL);
+                }
+            } catch (Exception e) {
+                log.warn("Batch get genders failed: count={} error={}",
+                        misses.size(), e.getMessage());
+            }
         }
+        for (Long userId : userIds) {
+            result.putIfAbsent(userId, false);
+        }
+        return result;
     }
 
-    /**
-     * 批量获取用户资料.
-     *
-     * <p>用于 Feed 展示时获取作者信息.
-     *
-     * @param userIds 用户ID列表
-     * @return 用户资料列表
-     */
     public List<UserProfileResponse> getUserProfiles(List<Long> userIds) {
         if (userIds == null || userIds.isEmpty()) {
-            return Collections.emptyList();
+            return List.of();
         }
-
         try {
-            BatchGetUserProfilesRequest request = BatchGetUserProfilesRequest.newBuilder()
-                    .addAllUserIds(userIds)
-                    .build();
-
-            UserServiceGrpc.UserServiceBlockingStub stub = createStub();
-            BatchGetUserProfilesResponse response = stub.batchGetUserProfiles(request);
-
-            return response.getProfilesList();
+            return userServiceStub.batchGetUserProfiles(
+                    BatchGetUserProfilesRequest.newBuilder()
+                            .addAllUserIds(userIds)
+                            .build())
+                    .getProfilesList();
         } catch (Exception e) {
-            log.warn("Failed to batch get user profiles, count={}, error={}",
+            log.warn("Batch get user profiles failed: count={} error={}",
                     userIds.size(), e.getMessage());
-            return Collections.emptyList();
+            return List.of();
         }
     }
 }

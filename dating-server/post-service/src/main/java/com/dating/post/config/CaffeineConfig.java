@@ -1,5 +1,7 @@
 package com.dating.post.config;
 
+import com.dating.post.manager.PostDetailCacheManager;
+import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
@@ -11,8 +13,6 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Caffeine 本地缓存配置.
- *
- * <p>用于 UserClient 的性别查询缓存,避免 feed-score-job 时 RPC 风暴.
  */
 @Configuration
 @EnableCaching
@@ -29,5 +29,17 @@ public class CaffeineConfig {
                 .expireAfterWrite(30, TimeUnit.SECONDS)
                 .recordStats());
         return manager;
+    }
+
+    /**
+     * 帖子公共详情 L1 缓存: 15秒 TTL,最大 50000 条.
+     */
+    @Bean
+    public Cache<Long, PostDetailCacheManager.CacheValue> postDetailLocalCache() {
+        return Caffeine.newBuilder()
+                .maximumSize(50_000)
+                .expireAfterWrite(15, TimeUnit.SECONDS)
+                .recordStats()
+                .build();
     }
 }

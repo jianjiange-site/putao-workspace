@@ -1,71 +1,86 @@
 package com.dating.post.service;
 
 import com.dating.post.entity.PostCommentEntity;
-import com.dating.post.exception.CommentNotFoundException;
 import com.dating.post.exception.ForbiddenException;
 import com.dating.post.manager.PostCommentManager;
 import com.dating.post.manager.PostManager;
+import com.dating.post.manager.PostStatManager;
 import com.dating.post.vo.CommentVO;
 import com.dating.post.vo.CommentsVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * CommentService.
- *
- * <p>负责评论的增删列表业务编排.
+ * 评论增删和一级评论列表.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class CommentService {
 
+    private static final int MAX_PAGE_SIZE = 50;
+
     private final PostCommentManager commentManager;
     private final PostManager postManager;
+    private final PostStatManager postStatManager;
 
-    /**
-     * 创建评论.
-     *
-     * @param userId 用户ID
-     * @param postId 帖子ID
-     * @param content 内容(1-512字符)
-     * @param rootId 根评论ID(自身是根则为0)
-     * @param parentId 直接父评论ID
-     * @return 评论ID
-     */
-    public long createComment(Long userId, Long postId, String content, Long rootId, Long parentId) {
-        // 1. 校验帖子是否存在
-        postManager.findByPostId(postId);
+    @Transactional(rollbackFor = Exception.class)
+    public long createComment(Long userId, Long postId, String content,
+                              Long rootId, Long parentId) {
+        postManager.getByPostId(postId);
 
-        // 2. 创建评论
-        long commentId = commentManager.createComment(
+        long normalizedRootId = rootId == null ? 0L : rootId;
+        long normalizedParentId = parentId == null ? 0L : parentId;
+        long replyToUserId = 0L;
+
+        if (normalizedRootId == 0L && normalizedParentId != 0L) {
+            throw new IllegalArgumentException(
+                    "parentId must be 0 for a root comment");
+        }
+        if (normalizedRootId != 0L) {
+            PostCommentEntity root = commentManager.getByCommentId(normalizedRootId);
+            if (!root.getPostId().equals(postId) || root.getRootId() != 0L) {
+                throw new IllegalArgumentException("Invalid root comment");
+            }
+            PostCommentEntity parent = normalizedParentId == 0L
+                    ? root
+                    : commentManager.getByCommentId(normalizedParentId);
+            boolean sameThread = parent.getCommentId().equals(normalizedRootId)
+                    || parent.getRootId().equals(normalizedRootId);
+            if (!parent.getPostId().equals(postId) || !sameThread) {
+                throw new IllegalArgumentException("Invalid parent comment");
+            }
+            normalizedParentId = parent.getCommentId();
+            replyToUserId = parent.getUserId();
+        }
+
+        PostCommentEntity comment = commentManager.createComment(
                 postId, userId, content,
-                rootId != null ? rootId : 0L,
-                parentId != null ? parentId : 0L
-        );
-
-        log.info("Comment created: commentId={} postId={} userId={}", commentId, postId, userId);
-        return commentId;
+                normalizedRootId, normalizedParentId, replyToUserId);
+        postStatManager.incrementCommentCount(postId, 1);
+        afterCommit(() -> {
+            try {
+                commentManager.cacheRootComment(comment);
+            } catch (Exception e) {
+                log.warn("Cache root comment failed: commentId={} error={}",
+                        comment.getCommentId(), e.getMessage());
+            }
+        });
+        return comment.getCommentId();
     }
 
-    /**
-     * 获取评论列表(游标分页).
-     *
-     * @param postId 帖子ID
-     * @param cursor 游标
-     * @param pageSize 每页大小
-     * @return 评论列表响应
-     */
-    public CommentsVO listComments(Long postId, Long cursor, int pageSize) {
-        // 1. 查询评论列表
-        List<PostCommentEntity> comments = commentManager.listComments(postId, cursor, pageSize);
-
-        if (comments.isEmpty()) {
+    public CommentsVO listComments(Long postId, Long cursor, int requestedPageSize) {
+        int pageSize = Math.max(1, Math.min(requestedPageSize, MAX_PAGE_SIZE));
+        List<PostCommentEntity> queried = commentManager.listComments(
+                postId, cursor, pageSize + 1);
+        if (queried.isEmpty()) {
             return CommentsVO.builder()
                     .comments(new ArrayList<>())
                     .nextCursor(0L)
@@ -73,13 +88,12 @@ public class CommentService {
                     .build();
         }
 
-        // 2. 判断是否有更多
-        boolean hasMore = comments.size() >= pageSize;
-        long nextCursor = hasMore ? comments.get(comments.size() - 1).getCommentId() : 0L;
-
-        // 3. 转换为 VO
-        List<CommentVO> items = comments.stream()
-                .limit(pageSize) // 确保不超过 pageSize
+        boolean hasMore = queried.size() > pageSize;
+        List<PostCommentEntity> page = queried.stream().limit(pageSize).toList();
+        long nextCursor = hasMore
+                ? page.get(page.size() - 1).getCommentId()
+                : 0L;
+        List<CommentVO> items = page.stream()
                 .map(c -> CommentVO.builder()
                         .commentId(c.getCommentId())
                         .postId(c.getPostId())
@@ -91,7 +105,6 @@ public class CommentService {
                         .createdAt(c.getCreatedAt().getEpochSecond())
                         .build())
                 .toList();
-
         return CommentsVO.builder()
                 .comments(items)
                 .nextCursor(nextCursor)
@@ -99,25 +112,35 @@ public class CommentService {
                 .build();
     }
 
-    /**
-     * 删除评论.
-     *
-     * @param commentId 评论ID
-     * @param userId 操作人ID(必须为评论作者)
-     */
     @Transactional(rollbackFor = Exception.class)
     public void deleteComment(Long commentId, Long userId) {
-        // 1. 查询评论
         PostCommentEntity comment = commentManager.getByCommentId(commentId);
-
-        // 2. 权限校验
         if (!comment.getUserId().equals(userId)) {
             throw new ForbiddenException("Only the author can delete the comment");
         }
+        commentManager.deleteComment(commentId);
+        postStatManager.incrementCommentCount(comment.getPostId(), -1);
+        afterCommit(() -> {
+            try {
+                commentManager.evictComment(comment.getPostId(), commentId);
+            } catch (Exception e) {
+                log.warn("Evict comment cache failed: commentId={} error={}",
+                        commentId, e.getMessage());
+            }
+        });
+    }
 
-        // 3. 逻辑删除
-        commentManager.deleteComment(commentId, comment.getPostId());
-
-        log.info("Comment deleted: commentId={} userId={}", commentId, userId);
+    private void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        action.run();
+                    }
+                });
     }
 }
