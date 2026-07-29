@@ -3,6 +3,7 @@ package com.dating.payment.service.impl;
 import com.dating.payment.constant.SubscriptionTierConst;
 import com.dating.payment.entity.UserSubscriptionEntity;
 import com.dating.payment.exception.PaymentBizException;
+import com.dating.payment.manager.SubscriptionCacheManager;
 import com.dating.payment.manager.UserSubscriptionManager;
 import com.dating.payment.service.SubscriptionService;
 import com.dating.payment.vo.SubscriptionVO;
@@ -26,9 +27,49 @@ import java.util.Optional;
 public class SubscriptionServiceImpl implements SubscriptionService {
 
     private final UserSubscriptionManager subscriptionManager;
+    private final SubscriptionCacheManager subscriptionCacheManager;
 
     @Override
     public SubscriptionVO getSubscription(Long userId) {
+        // 1. 尝试从缓存获取
+        SubscriptionVO cached = subscriptionCacheManager.getFromCache(userId);
+        if (cached != null) {
+            // 2. 缓存命中时，检查 expires_at 是否已过期（防止缓存 TTL > 订阅到期时间）
+            if (isExpired(cached)) {
+                log.debug("Subscription cache expired: userId={}, expiresAt={}", userId, cached.getExpiresAt());
+                subscriptionCacheManager.evict(userId);
+            } else {
+                return cached;
+            }
+        }
+
+        // 3. 缓存未命中或已过期，查询 DB
+        SubscriptionVO vo = buildSubscriptionVO(userId);
+
+        // 4. 回填缓存
+        subscriptionCacheManager.putToCache(userId, vo);
+
+        return vo;
+    }
+
+    /**
+     * 判断订阅是否已过期.
+     *
+     * @param vo 订阅信息
+     * @return true 表示已过期，需要删除缓存回源
+     */
+    private boolean isExpired(SubscriptionVO vo) {
+        if (!vo.isActive()) {
+            return false;
+        }
+        long now = Instant.now().getEpochSecond();
+        return vo.getExpiresAt() > 0 && vo.getExpiresAt() < now;
+    }
+
+    /**
+     * 构建订阅 VO(从 DB 查询).
+     */
+    private SubscriptionVO buildSubscriptionVO(Long userId) {
         SubscriptionVO vo = new SubscriptionVO();
         vo.setUserId(userId);
         vo.setTier(SubscriptionTierConst.FREE);
@@ -102,6 +143,9 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             log.info("activateSubscription renew: userId={}, tier={}, expiresAt={}",
                     userId, entity.getTier(), entity.getExpiresAt());
         }
+
+        // 缓存失效，下次查询会回源
+        subscriptionCacheManager.evict(userId);
 
         return entity.getExpiresAt().toEpochMilli();
     }

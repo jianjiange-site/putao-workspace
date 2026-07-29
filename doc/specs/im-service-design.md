@@ -334,7 +334,8 @@ payload 形如 `{matchId, self{userId,nickname,avatarKey,age}, peer{...}, matche
 
 | Key | 类型 | TTL | 用途 |
 |---|---|---|---|
-| `im:presence:online` | ZSet | 永久（下线即 ZREM） | 在线用户集，member=userId / score=上线 ms |
+| `putao:im:presence:online` | ZSet | 永久（下线即 ZREM） | 在线用户集，member=userId / score=上线 ms |
+| `putao:im:user:type:{userId}` | String | 10min | 用户类型缓存，value=0(BH)/1(DH)，**Cache-Aside 读写** |
 
 ## 11. 反导流：联系方式检测
 

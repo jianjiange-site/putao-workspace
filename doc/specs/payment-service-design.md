@@ -260,11 +260,20 @@ else                           // 免费币不够，付费币补
 **`GetSubscription(userId)`**（给 match-service 算配额）：
 
 ```
-查 user_subscription：
+1. 尝试从 Redis 缓存获取（key: putao:payment:subscription:{userId}，TTL 24h）
+   - 命中 → 检查 expires_at 是否已过期
+     - 已过期 → 删除缓存，继续步骤 2
+     - 未过期 → 直接返回
+   - 未命中 → 继续步骤 2
+2. 查 user_subscription：
   无记录                          → FREE, is_active=false
-  有但 expires_at < now 或 ≤FREE  → FREE, is_active=false（过期降级）
+  有但 expires_at < now 或 ≤FREE  → FREE, is_active=false（被动降级）
   有且 expires_at ≥ now 且 >FREE  → 原 tier, is_active=true, 带 expires_at
+3. 回填缓存
 ```
+
+> **被动降级策略**：订阅到期后，数据库 `tier` 字段保留原始值，仅在查询时根据 `expires_at` 判断并返回 FREE。
+> **缓存一致性处理**：即使 Redis TTL 未到期，每次命中缓存时都会检查 `expires_at` 是否已过期。如果已过期则删除缓存并回源查询。
 
 **`activateSubscription(userId, newTier, durationDays, source)`**（发奖时调）：
 
@@ -273,8 +282,10 @@ newTier ≤ FREE          → 忽略（不是付费档）
 无记录                   → INSERT，expires_at = now + duration
 未过期（续订）           → tier 只升不降，expires_at 从当前到期日顺延（叠加时长）
 已过期                   → tier=newTier，expires_at 从 now 重新算
+写成功后                 → 删除缓存 putao:payment:subscription:{userId}（下次查询回源）
 ```
 
+> **缓存策略**：采用 Cache-Aside 模式，TTL 24h + 写失效 + 读时过期检查。订阅变更（买/续/取消）时删除缓存；缓存命中时检查 `expires_at` 是否已过期，确保不会返回过期订阅数据。
 > "只升不降 + 时长顺延"：用户月卡没到期又买年卡，档位升到年卡、时间从原到期日往后加，不亏用户。
 
 档位对应配额表见 `match-service-prd-tech.md` §3.1（FREE 5次右划/MONTHLY 15次 等）。
@@ -341,6 +352,7 @@ REST 端点已挂好（`/v1/withdraw/accounts`、`/v1/withdraw/request`、`/v1/h
 - **ConsumeCoins 幂等**：`idempotency_key` + 部分唯一索引 + 竞态兜底反查，让 match SuperHi / im 聊天扣费可安全重发。
 - **PayPal 可降级**：缺凭据不崩服务，调用时才报错，方便本地/未配通道环境启动。
 - **订阅只升不降 + 时长顺延**：续订/升档不亏用户。
+- **订阅被动降级 + 缓存过期检查**：到期后数据库 `tier` 保留原始值，查询时根据 `expires_at` 判断返回 FREE；缓存命中时也检查 `expires_at`，防止返回过期订阅数据。
 - **提现先建表后填逻辑**：MVP 阶段表结构先稳定，业务后续补。
 
 ---

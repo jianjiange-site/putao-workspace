@@ -286,18 +286,23 @@ phone / third-party 两套显式入口,**不混合多键优先级**。
 
 | Key | 类型 | TTL | 说明 |
 |---|---|---|---|
-| `user:profile:{userId}` | Hash | 24h | user_info 主表字段镜像(不含 custom_avatar 等大字段,避免热 key) |
-| `user:profile:big:{userId}` | String(JSON) | 24h | custom_avatar 等大字段独立 key |
-| `user:interest:{userId}` | String(JSON) | 7d | 兴趣全量 JSON |
-| `user:ban:status:{userId}` | String | 5m | 封禁状态短缓存,避免登录高频回源 |
-| `lock:user:register:phone:<...>` | String(NX) | 30s | 注册解析锁 |
-| `lock:user:register:tp:<...>` | String(NX) | 30s | 注册解析锁 |
+| `putao:user:profile:{userId}` | String(JSON) | 24h | user_info 主资料聚合 VO（含兴趣列表 JSON），**Cache-Aside 读写** |
+| `putao:user:profile:big:{userId}` | String(JSON) | 24h | custom_avatar 等大字段独立 key |
+| `putao:user:interest:{userId}` | String(JSON) | 7d | 兴趣全量 JSON |
+| `putao:user:ban:status:{userId}` | String | 5min | 封禁状态短缓存，避免登录高频回源 |
+| `putao:user:lock:register:phone:<...>` | String(NX) | 30s | 注册解析锁 |
+| `putao:user:lock:register:tp:<...>` | String(NX) | 30s | 注册解析锁 |
 
-**一致性策略**(CLAUDE.md 强约束):
+**一致性策略**(CLAUDE.md 强约束)：
 
-- 一律 **「先写库,再删缓存」** cache aside,禁止双写。
-- 批量读:`BatchGetProfile` 走 `MGET` Hash → 集合 miss 的 ID → 一次性 `SELECT ... WHERE id IN (...)` 回填 → `pipelined HMSET`。禁止 N+1。
-- 主表大字段(custom_avatar JSONB 等)独立 key,避免 Hash 单 field 几 KB 影响其他字段读取。
+- 一律 **「先写库,再删缓存」** cache aside，禁止双写。
+- `GetProfile`：先查缓存，命中返回；未命中查 DB → 转 VO → 回填缓存 → 返回。
+- `BatchGetProfile`（≤200 条/次）：
+  1. 先批量 `MGET` 缓存，收集未命中 ID
+  2. 未命中 ID 批量 `SELECT WHERE id IN (...)` 回填缓存
+  3. 合并结果返回
+  **禁止 N+1**。
+- 主表大字段(custom_avatar JSONB 等)独立 key，避免 Hash 单 field 几 KB 影响其他字段读取。
 
 ### 5.6 兴趣标签
 

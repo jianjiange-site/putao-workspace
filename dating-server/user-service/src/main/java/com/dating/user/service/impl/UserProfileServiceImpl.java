@@ -48,20 +48,42 @@ public class UserProfileServiceImpl implements UserProfileService {
 
     @Override
     public UserProfileVO getProfile(Long userId) {
-        // 1. 主资料小字段
+        // 1. 尝试从缓存获取基础资料（不包含 interests）
+        String cached = cacheManager.getProfileJson(userId);
+        if (cached != null) {
+            UserProfileVO cachedVo = cacheManager.readJson(cached, UserProfileVO.class);
+            if (cachedVo != null) {
+                log.debug("getProfile cache hit: userId={}", userId);
+                // 2. 兴趣走独立缓存（单独更新，不影响 profile 缓存）
+                List<UserInterestEntity> interests = loadInterests(userId);
+                cachedVo.setInterests(interests.stream()
+                        .map(InterestConverter.INSTANCE::toVO)
+                        .collect(Collectors.toList()));
+                return cachedVo;
+            }
+        }
+
+        // 3. 缓存未命中，查询 DB
         UserInfoEntity entity = userInfoManager.findByUserId(userId);
         if (entity == null) {
             throw new UserNotFoundException(userId);
         }
         UserProfileVO vo = UserProfileConverter.INSTANCE.toVO(entity);
 
-        // 2. 兴趣(走 interest cache)
+        // 4. 回填基础资料缓存（不含 interests，避免 interests 变更时失效 profile 缓存）
+        try {
+            cacheManager.cacheProfileJson(userId, objectMapper.writeValueAsString(vo));
+        } catch (Exception e) {
+            log.warn("cacheProfileJson failed: userId={}, err={}", userId, e.getMessage());
+        }
+
+        // 5. 兴趣(走 interest cache)
         List<UserInterestEntity> interests = loadInterests(userId);
         vo.setInterests(interests.stream()
                 .map(InterestConverter.INSTANCE::toVO)
                 .collect(Collectors.toList()));
 
-        // 3. 头像:设计文档 §5.4 提到 user_info.custom_avatar JSONB 列,
+        // 6. 头像:设计文档 §5.4 提到 user_info.custom_avatar JSONB 列,
         //    V1 表里未建,留接口位置后续 V2 加列(V2__add_user_avatar_column.sql)
         vo.setAvatar(null);
         return vo;
@@ -79,20 +101,49 @@ public class UserProfileServiceImpl implements UserProfileService {
                     "batch size " + unique.size() + " exceeds limit " + BATCH_LIMIT);
         }
 
-        // 2. 一次 IN 查 user_info
-        Map<Long, UserInfoEntity> userMap = userInfoManager.mapByUserIds(unique);
+        // 2. 先查缓存，收集未命中
+        List<Long> cacheMisses = new ArrayList<>();
+        Map<Long, UserProfileVO> cachedMap = new java.util.LinkedHashMap<>();
+        for (Long uid : unique) {
+            String cached = cacheManager.getProfileJson(uid);
+            if (cached != null) {
+                UserProfileVO cachedVo = cacheManager.readJson(cached, UserProfileVO.class);
+                if (cachedVo != null) {
+                    log.debug("batchGetProfile cache hit: userId={}", uid);
+                    cachedMap.put(uid, cachedVo);
+                    continue;
+                }
+            }
+            cacheMisses.add(uid);
+        }
 
-        // 3. 一次 IN 查 interests
-        Map<Long, List<UserInterestEntity>> interestMap = includeInterests
-                ? userInterestManager.mapByUserIds(unique)
-                : Collections.emptyMap();
+        // 3. 缓存未命中，批量查 DB
+        Map<Long, UserInfoEntity> userMap = Collections.emptyMap();
+        if (!cacheMisses.isEmpty()) {
+            userMap = userInfoManager.mapByUserIds(cacheMisses);
+            // 回填缓存
+            for (UserInfoEntity entity : userMap.values()) {
+                try {
+                    UserProfileVO vo = UserProfileConverter.INSTANCE.toVO(entity);
+                    cacheManager.cacheProfileJson(entity.getUserId(), objectMapper.writeValueAsString(vo));
+                    cachedMap.put(entity.getUserId(), vo);
+                } catch (Exception e) {
+                    log.warn("batch cacheProfileJson failed: userId={}, err={}", entity.getUserId(), e.getMessage());
+                }
+            }
+        }
 
-        // 4. 按入参顺序组装
+        // 4. 兴趣(走独立缓存)
+        Map<Long, List<UserInterestEntity>> interestMap = Collections.emptyMap();
+        if (includeInterests) {
+            interestMap = userInterestManager.mapByUserIds(unique);
+        }
+
+        // 5. 按入参顺序组装
         List<UserProfileVO> result = new ArrayList<>(unique.size());
         for (Long uid : unique) {
-            UserInfoEntity e = userMap.get(uid);
-            if (e == null) continue;
-            UserProfileVO vo = UserProfileConverter.INSTANCE.toVO(e);
+            UserProfileVO vo = cachedMap.get(uid);
+            if (vo == null) continue;
             if (includeInterests) {
                 List<UserInterestEntity> items = interestMap.getOrDefault(uid, Collections.emptyList());
                 vo.setInterests(items.stream().map(InterestConverter.INSTANCE::toVO).collect(Collectors.toList()));
