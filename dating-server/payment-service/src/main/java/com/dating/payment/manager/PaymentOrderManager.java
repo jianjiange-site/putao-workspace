@@ -1,6 +1,7 @@
 package com.dating.payment.manager;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dating.payment.entity.PaymentOrderEntity;
 import com.dating.payment.mapper.PaymentOrderMapper;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,18 @@ public class PaymentOrderManager {
         LambdaQueryWrapper<PaymentOrderEntity> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(PaymentOrderEntity::getOrderId, orderId);
         return Optional.ofNullable(paymentOrderMapper.selectOne(wrapper));
+    }
+
+    public Optional<PaymentOrderEntity> findByOrderIdForUpdate(String orderId) {
+        return paymentOrderMapper.findByOrderIdForUpdate(orderId);
+    }
+
+    public Optional<PaymentOrderEntity> findByExternalTransaction(
+            String channel, String extTransactionId) {
+        if (extTransactionId == null || extTransactionId.isBlank()) {
+            return Optional.empty();
+        }
+        return paymentOrderMapper.findByExternalTransaction(channel, extTransactionId);
     }
 
     /**
@@ -69,12 +82,14 @@ public class PaymentOrderManager {
      * @param status  新状态
      * @return 影响行数
      */
-    public int updateStatus(String orderId, String status) {
-        LambdaQueryWrapper<PaymentOrderEntity> wrapper = new LambdaQueryWrapper<>();
+    public int updateStatus(String orderId, String status, String... expectedStatuses) {
+        LambdaUpdateWrapper<PaymentOrderEntity> wrapper = new LambdaUpdateWrapper<>();
         wrapper.eq(PaymentOrderEntity::getOrderId, orderId);
-        PaymentOrderEntity entity = new PaymentOrderEntity();
-        entity.setStatus(status);
-        return paymentOrderMapper.update(entity, wrapper);
+        if (expectedStatuses != null && expectedStatuses.length > 0) {
+            wrapper.in(PaymentOrderEntity::getStatus, (Object[]) expectedStatuses);
+        }
+        wrapper.set(PaymentOrderEntity::getStatus, status);
+        return paymentOrderMapper.update(null, wrapper);
     }
 
     /**

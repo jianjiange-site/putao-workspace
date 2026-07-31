@@ -61,10 +61,10 @@ public class TokenService {
      * 生成 LiveKit 通话 Token.
      *
      * @param userId  用户ID
-     * @param peerId  对方用户ID(字符串)
+     * @param peerId  对方用户 ID
      * @return LiveKit Token
      */
-    public String generateCallToken(Long userId, String peerId) {
+    public String generateCallToken(Long userId, Long peerId) {
         if (livekitApiKey == null || livekitSecretKey == null || livekitApiKey.isEmpty()) {
             log.warn("LiveKit not configured, returning empty token");
             return "";

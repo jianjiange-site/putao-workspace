@@ -34,6 +34,7 @@ async def user_persona_prompt(request: ModelRequest) -> str:
     """
     ctx: UserContext = request.runtime.context
     msgs = request.messages
+    # 调用分类器进行意图分类
     intent = await classify_intent(
         bh_info=ctx.bh_info,
         dh_info=ctx.dh_info,

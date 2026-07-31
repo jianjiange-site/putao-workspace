@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 public class SubscriptionCacheManager {
 
     private static final long SUBSCRIPTION_CACHE_TTL_HOURS = 24;
+    private static final long FREE_CACHE_TTL_MINUTES = 30;
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final ObjectMapper objectMapper;
@@ -63,7 +64,15 @@ public class SubscriptionCacheManager {
     public void putToCache(Long userId, SubscriptionVO vo) {
         String key = PaymentRedisKey.subscription(userId);
         try {
-            redisTemplate.opsForValue().set(key, vo, SUBSCRIPTION_CACHE_TTL_HOURS, TimeUnit.HOURS);
+            long ttlMillis = TimeUnit.HOURS.toMillis(SUBSCRIPTION_CACHE_TTL_HOURS);
+            if (vo.isActive() && vo.getExpiresAt() > 0) {
+                ttlMillis = Math.min(ttlMillis,
+                        Math.max(1_000L, vo.getExpiresAt() - System.currentTimeMillis()));
+            } else {
+                ttlMillis = TimeUnit.MINUTES.toMillis(FREE_CACHE_TTL_MINUTES);
+            }
+            redisTemplate.opsForValue().set(
+                    key, vo, ttlMillis, TimeUnit.MILLISECONDS);
             log.debug("Subscription cached: userId={}, tier={}", userId, vo.getTier());
         } catch (Exception e) {
             log.warn("Put subscription to cache failed: userId={}, err={}", userId, e.getMessage());

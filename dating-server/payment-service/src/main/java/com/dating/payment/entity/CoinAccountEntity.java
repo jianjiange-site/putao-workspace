@@ -23,8 +23,7 @@ public class CoinAccountEntity {
     /** 付费金币余额（V4 新增），CHECK >= 0 */
     private Long paidBalance;
 
-    /** 乐观锁版本号 */
-    @Version
+    /** 账户修订号，每次余额更新时递增，不参与并发条件判断 */
     private Integer version;
 
     @TableField(fill = FieldFill.INSERT)

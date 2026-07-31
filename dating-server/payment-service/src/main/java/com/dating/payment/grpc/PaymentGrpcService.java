@@ -6,6 +6,7 @@ import com.dating.payment.service.PaymentService;
 import com.dating.payment.service.SubscriptionService;
 import com.dating.payment.vo.CoinAccountVO;
 import com.dating.payment.vo.SubscriptionVO;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -330,9 +331,8 @@ public class PaymentGrpcService {
     }
 
     private <T> void sendError(StreamObserver<T> observer, int code, String message) {
-        try {
-            // 通用错误处理，子类可覆盖
-        } catch (Exception ignored) {}
-        // 返回错误响应
+        String safeMessage = message == null || message.isBlank()
+                ? "Payment service request failed" : message;
+        observer.onError(Status.INTERNAL.withDescription(safeMessage).asRuntimeException());
     }
 }

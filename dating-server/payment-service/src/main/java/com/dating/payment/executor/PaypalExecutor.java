@@ -4,6 +4,8 @@ import com.dating.payment.constant.PaymentErrorCode;
 import com.dating.payment.exception.PaymentBizException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -12,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -44,6 +47,9 @@ public class PaypalExecutor {
 
     @Value("${paypal.webhook-id:}")
     private String webhookId;
+
+    @Value("${paypal.merchant-id:}")
+    private String merchantId;
 
     /** 缓存 access token */
     private String cachedAccessToken;
@@ -128,35 +134,24 @@ public class PaypalExecutor {
 
         String requestBody;
         try {
-            requestBody = """
-                {
-                  "intent": "CAPTURE",
-                  "purchase_units": [{
-                    "reference_id": "%s",
-                    "description": "%s",
-                    "amount": {
-                      "currency_code": "USD",
-                      "value": "%s"
-                    }
-                  }],
-                  "application_context": {
-                    "return_url": "%s",
-                    "cancel_url": "%s",
-                    "brand_name": "Dating App",
-                    "landing_page": "BILLING",
-                    "user_action": "PAY_NOW"
-                  }
-                }
-                """.formatted(
-                    orderId,
-                    // 转义 JSON 字符串
-                    escapeJson(productName),
-                    // 金额
-                    amount.setScale(2).toPlainString(),
-                    // 跳转 URL
-                    escapeJson(returnUrl != null ? returnUrl : ""),
-                    escapeJson(returnUrl != null ? returnUrl : "")
-            );
+            ObjectNode root = objectMapper.createObjectNode();
+            root.put("intent", "CAPTURE");
+            ArrayNode purchaseUnits = root.putArray("purchase_units");
+            ObjectNode purchaseUnit = purchaseUnits.addObject();
+            purchaseUnit.put("reference_id", orderId);
+            purchaseUnit.put("custom_id", orderId);
+            purchaseUnit.put("invoice_id", orderId);
+            purchaseUnit.put("description", productName);
+            ObjectNode amountNode = purchaseUnit.putObject("amount");
+            amountNode.put("currency_code", "USD");
+            amountNode.put("value", amount.setScale(2).toPlainString());
+            ObjectNode applicationContext = root.putObject("application_context");
+            applicationContext.put("return_url", returnUrl != null ? returnUrl : "");
+            applicationContext.put("cancel_url", returnUrl != null ? returnUrl : "");
+            applicationContext.put("brand_name", "Dating App");
+            applicationContext.put("landing_page", "BILLING");
+            applicationContext.put("user_action", "PAY_NOW");
+            requestBody = objectMapper.writeValueAsString(root);
         } catch (Exception e) {
             throw new PaymentBizException(PaymentErrorCode.PAYPAL_CREATE_ORDER_FAILED, "Invalid order params");
         }
@@ -166,6 +161,7 @@ public class PaypalExecutor {
             HttpHeaders headers = new HttpHeaders();
             headers.set("Authorization", "Bearer " + accessToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("PayPal-Request-Id", orderId);
 
             // 设置请求体
             HttpEntity<String> request = new HttpEntity<>(requestBody, headers);
@@ -211,11 +207,15 @@ public class PaypalExecutor {
      * 捕获（capture）PayPal 订单.
      *
      * @param extOrderId PayPal order id
-     * @return 是否捕获成功（ORDER_ALREADY_CAPTURED 也返回 true）
+     * @return verified capture result
      */
-    public boolean captureOrder(String extOrderId) {
+    public PayPalCaptureResult captureOrder(String extOrderId) {
         if (!isConfigured()) {
             throw new IllegalStateException("PayPal not configured");
+        }
+        if (extOrderId == null || extOrderId.isBlank()) {
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "Missing PayPal order id");
         }
 
         String accessToken = getAccessToken();
@@ -238,13 +238,7 @@ public class PaypalExecutor {
 
             if ("COMPLETED".equals(status)) {
                 log.info("PayPal capture success: extOrderId={}", extOrderId);
-                return true;
-            }
-
-            // 幂等处理：订单已被捕获
-            if (hasCaptureAlreadyCompletedError(root)) {
-                log.info("PayPal order already captured (idempotent): extOrderId={}", extOrderId);
-                return true;
+                return parseCaptureResult(root, extOrderId);
             }
 
             log.warn("PayPal capture unexpected status: extOrderId={}, status={}", extOrderId, status);
@@ -253,9 +247,18 @@ public class PaypalExecutor {
 
         } catch (PaymentBizException e) {
             throw e;
+        } catch (HttpStatusCodeException e) {
+            if (hasCaptureAlreadyCompletedError(readJson(e.getResponseBodyAsString()))) {
+                log.info("PayPal order already captured (idempotent): extOrderId={}", extOrderId);
+                return getOrderDetails(extOrderId);
+            }
+            log.error("PayPal capture failed: extOrderId={}, status={}", extOrderId, e.getStatusCode());
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "PayPal capture request failed");
         } catch (RestClientException e) {
             log.error("PayPal capture failed: extOrderId={}", extOrderId, e);
-            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED, e.getMessage());
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "PayPal capture request failed");
         } catch (Exception e) {
             log.error("PayPal capture parse failed: extOrderId={}", extOrderId, e);
             throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED, e.getMessage());
@@ -266,16 +269,25 @@ public class PaypalExecutor {
      * 验证 PayPal webhook 签名.
      *
      * @param payload   原始 payload
-     * @param headers   请求头
      * @return 验证通过返回 true
      */
-    public boolean verifyWebhookSignature(String payload, String headers) {
+    public boolean verifyWebhookSignature(String payload,
+                                          String transmissionSig,
+                                          String transmissionId,
+                                          String transmissionTime,
+                                          String certUrl,
+                                          String authAlgo) {
         if (webhookId == null || webhookId.isBlank()) {
-            log.warn("PayPal webhook-id not configured, skip verification");
-            return true;
+            log.error("PayPal webhook-id not configured; refusing webhook");
+            return false;
         }
 
         if (!isConfigured()) {
+            return false;
+        }
+        if (isBlank(transmissionSig) || isBlank(transmissionId) || isBlank(transmissionTime)
+                || isBlank(certUrl) || isBlank(authAlgo)) {
+            log.warn("PayPal webhook signature headers are incomplete");
             return false;
         }
 
@@ -287,7 +299,16 @@ public class PaypalExecutor {
             httpHeaders.set("Authorization", "Bearer " + accessToken);
             httpHeaders.setContentType(MediaType.APPLICATION_JSON);
 
-            HttpEntity<String> request = new HttpEntity<>(payload, httpHeaders);
+            ObjectNode body = objectMapper.createObjectNode();
+            body.put("transmission_id", transmissionId);
+            body.put("transmission_time", transmissionTime);
+            body.put("cert_url", certUrl);
+            body.put("auth_algo", authAlgo);
+            body.put("transmission_sig", transmissionSig);
+            body.put("webhook_id", webhookId);
+            body.set("webhook_event", objectMapper.readTree(payload));
+            HttpEntity<String> request =
+                    new HttpEntity<>(objectMapper.writeValueAsString(body), httpHeaders);
             var response = restTemplate.postForEntity(url, request, String.class);
 
             JsonNode root = objectMapper.readTree(response.getBody());
@@ -322,6 +343,77 @@ public class PaypalExecutor {
             // ignore
         }
         return false;
+    }
+
+    private PayPalCaptureResult getOrderDetails(String extOrderId) {
+        String accessToken = getAccessToken();
+        String url = getBaseUrl() + "/v2/checkout/orders/" + extOrderId;
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", "Bearer " + accessToken);
+            HttpEntity<Void> request = new HttpEntity<>(headers);
+            var response = restTemplate.exchange(
+                    url, org.springframework.http.HttpMethod.GET, request, String.class);
+            JsonNode root = objectMapper.readTree(response.getBody());
+            if (!"COMPLETED".equals(root.path("status").asText())) {
+                throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                        "PayPal order is not completed");
+            }
+            return parseCaptureResult(root, extOrderId);
+        } catch (PaymentBizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to query PayPal order: extOrderId={}", extOrderId, e);
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "Unable to verify captured PayPal order");
+        }
+    }
+
+    private PayPalCaptureResult parseCaptureResult(JsonNode root, String expectedExtOrderId) {
+        String responseOrderId = root.path("id").asText();
+        if (!expectedExtOrderId.equals(responseOrderId)) {
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "PayPal order id mismatch");
+        }
+
+        JsonNode purchaseUnit = root.path("purchase_units").path(0);
+        String merchantOrderId = purchaseUnit.path("custom_id").asText(
+                purchaseUnit.path("reference_id").asText(""));
+        JsonNode capturedAmount =
+                purchaseUnit.path("payments").path("captures").path(0).path("amount");
+        if (capturedAmount.isMissingNode()) {
+            capturedAmount = purchaseUnit.path("amount");
+        }
+        String value = capturedAmount.path("value").asText();
+        String currency = capturedAmount.path("currency_code").asText();
+        String responseMerchantId =
+                purchaseUnit.path("payee").path("merchant_id").asText("");
+        if (value.isBlank() || currency.isBlank()) {
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "PayPal capture amount is missing");
+        }
+        if (!merchantId.isBlank() && !merchantId.equals(responseMerchantId)) {
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "PayPal merchant id mismatch");
+        }
+        return new PayPalCaptureResult(
+                responseOrderId,
+                merchantOrderId,
+                new BigDecimal(value),
+                currency,
+                responseMerchantId);
+    }
+
+    private JsonNode readJson(String body) {
+        try {
+            return objectMapper.readTree(body);
+        } catch (Exception ignored) {
+            return objectMapper.createObjectNode();
+        }
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private String escapeJson(String s) {

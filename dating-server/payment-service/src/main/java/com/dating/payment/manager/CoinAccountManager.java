@@ -1,11 +1,8 @@
 package com.dating.payment.manager;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dating.payment.entity.CoinAccountEntity;
 import com.dating.payment.mapper.CoinAccountMapper;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
@@ -13,9 +10,8 @@ import java.util.Optional;
 /**
  * 金币账户 Manager.
  *
- * <p>封装金币账户的数据访问和乐观锁更新操作.
+ * <p>封装金币账户的数据访问，并通过数据库行锁串行化同一用户的余额变更.
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class CoinAccountManager {
@@ -39,48 +35,28 @@ public class CoinAccountManager {
      * @return 账户实体
      */
     public CoinAccountEntity getOrCreate(Long userId) {
-        return findByUserId(userId).orElseGet(() -> {
-            CoinAccountEntity entity = new CoinAccountEntity();
-            entity.setUserId(userId);
-            entity.setBalance(0L);
-            entity.setPaidBalance(0L);
-            coinAccountMapper.insert(entity);
-            return entity;
-        });
+        coinAccountMapper.insertIfAbsent(userId);
+        return findByUserId(userId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Coin account initialization failed: " + userId));
     }
 
     /**
-     * 乐观锁更新免费币余额.
+     * 确保账户存在，并在当前事务中锁定用户账户行.
      *
-     * @param userId  用户 ID
-     * @param balance 新的免费币余额
-     * @param version 当前版本号
-     * @return 更新成功返回 true
+     * <p>调用方必须处于事务中，行锁会在事务提交或回滚时释放.
      */
-    public boolean updateFreeBalance(Long userId, Long balance, Integer version) {
-        CoinAccountEntity entity = new CoinAccountEntity();
-        entity.setUserId(userId);
-        entity.setBalance(balance);
-        return coinAccountMapper.updateById(entity) > 0;
+    public CoinAccountEntity getOrCreateForUpdate(Long userId) {
+        coinAccountMapper.insertIfAbsent(userId);
+        CoinAccountEntity account = coinAccountMapper.selectByUserIdForUpdate(userId);
+        if (account == null) {
+            throw new IllegalStateException("Coin account lock failed: " + userId);
+        }
+        return account;
     }
 
     /**
-     * 乐观锁更新付费币余额.
-     *
-     * @param userId       用户 ID
-     * @param paidBalance  新的付费币余额
-     * @param version      当前版本号
-     * @return 更新成功返回 true
-     */
-    public boolean updatePaidBalance(Long userId, Long paidBalance, Integer version) {
-        CoinAccountEntity entity = new CoinAccountEntity();
-        entity.setUserId(userId);
-        entity.setPaidBalance(paidBalance);
-        return coinAccountMapper.updateById(entity) > 0;
-    }
-
-    /**
-     * 乐观锁更新双账户.
+     * 更新已由当前事务锁定的金币账户.
      *
      * @param userId       用户 ID
      * @param balance      新的免费币余额
@@ -88,13 +64,10 @@ public class CoinAccountManager {
      * @return 更新成功返回 true
      */
     public boolean updateBalance(Long userId, Long balance, Long paidBalance) {
-        CoinAccountEntity entity = new CoinAccountEntity();
-        entity.setUserId(userId);
-        entity.setBalance(balance);
-        entity.setPaidBalance(paidBalance);
-        int rows = coinAccountMapper.updateById(entity);
-        if (rows == 0) {
-            throw new OptimisticLockingFailureException("Coin account update failed, version conflict");
+        int rows = coinAccountMapper.updateBalances(userId, balance, paidBalance);
+        if (rows != 1) {
+            throw new IllegalStateException(
+                    "Coin account update affected unexpected rows: " + rows);
         }
         return true;
     }

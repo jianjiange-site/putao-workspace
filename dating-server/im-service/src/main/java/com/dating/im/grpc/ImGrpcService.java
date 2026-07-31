@@ -107,7 +107,7 @@ public class ImGrpcService extends ImServiceGrpc.ImServiceImplBase {
     public void generateCallToken(GenerateCallTokenRequest request,
                                   StreamObserver<GenerateCallTokenResponse> responseObserver) {
         Long userId = request.getUserId();
-        String peerId = request.getPeerId();
+        Long peerId = request.getPeerId();
 
         log.info("GenerateCallToken: userId={}, peerId={}", userId, peerId);
 

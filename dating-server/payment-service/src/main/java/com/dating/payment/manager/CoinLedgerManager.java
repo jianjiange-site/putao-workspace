@@ -76,13 +76,7 @@ public class CoinLedgerManager {
      * @return 存在则返回已有记录，否则保存并返回
      */
     public CoinLedgerEntity saveWithIdempotencyCheck(CoinLedgerEntity entity, Long userId, String key) {
-        try {
-            coinLedgerMapper.insert(entity);
-            return entity;
-        } catch (DuplicateKeyException e) {
-            log.warn("Duplicate idempotency key: userId={}, key={}", userId, key);
-            return coinLedgerMapper.findByUserIdAndIdempotencyKey(userId, key)
-                    .orElseThrow(() -> new IllegalStateException("Idempotency key conflict but record not found"));
-        }
+        coinLedgerMapper.insert(entity);
+        return entity;
     }
 }

@@ -1,6 +1,6 @@
 # Post Service 面试考点
 
-> 本文基于 `post-service-业务.md`、`post-service 业务流程详解.md` 以及当前 Post Service 实现整理。  
+> 本文基于 `post-service-业务清单.md`、`post-service-业务流程详解.md`、`post-service-特殊场景设计.md` 以及当前实现整理。
 > 面试回答时不要只说“使用了 Redis、Caffeine、RocketMQ”，还要说明数据特征、一致性要求、失败场景、方案取舍和生产边界。
 
 ## 一、服务整体设计
@@ -511,7 +511,7 @@ score < lastScore
 例如规则是：
 
 ```text
-每8条内容：
+每10条内容：
 第3个位置放好友内容
 第6个位置放冷启动内容
 其他位置放热门推荐

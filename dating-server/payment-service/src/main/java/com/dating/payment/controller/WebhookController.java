@@ -1,5 +1,7 @@
 package com.dating.payment.controller;
 
+import com.dating.payment.constant.PaymentErrorCode;
+import com.dating.payment.executor.PaypalExecutor;
 import com.dating.payment.service.PaymentService;
 import com.dating.payment.vo.Result;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -20,6 +22,7 @@ public class WebhookController {
 
     private final PaymentService paymentService;
     private final ObjectMapper objectMapper;
+    private final PaypalExecutor paypalExecutor;
 
     /**
      * PayPal Webhook 回调.
@@ -34,16 +37,27 @@ public class WebhookController {
             @RequestHeader(value = "PAYPAL-TRANSMISSION-SIG", required = false) String sig,
             @RequestHeader(value = "PAYPAL-TRANSMISSION-ID", required = false) String transmissionId,
             @RequestHeader(value = "PAYPAL-TRANSMISSION-TIME", required = false) String transmissionTime,
-            @RequestHeader(value = "PAYPAL-CERT-URL", required = false) String certUrl) {
-        log.info("PayPal webhook received: payload={}", payload);
+            @RequestHeader(value = "PAYPAL-CERT-URL", required = false) String certUrl,
+            @RequestHeader(value = "PAYPAL-AUTH-ALGO", required = false) String authAlgo) {
+        log.info("PayPal webhook received: transmissionId={}", transmissionId);
 
         try {
+            if (!paypalExecutor.verifyWebhookSignature(
+                    payload, sig, transmissionId, transmissionTime, certUrl, authAlgo)) {
+                return Result.fail(PaymentErrorCode.PAYPAL_VERIFY_SIGNATURE_FAILED,
+                        "Invalid PayPal webhook signature");
+            }
+
             JsonNode root = objectMapper.readTree(payload);
             String eventType = root.path("event_type").asText();
             JsonNode resource = root.path("resource");
 
             String orderId = resource.path("custom_id").asText(null);
-            String extOrderId = resource.path("id").asText(null);
+            String extOrderId = resource.path("supplementary_data")
+                    .path("related_ids").path("order_id").asText(null);
+            if (extOrderId == null && "CHECKOUT.ORDER.APPROVED".equals(eventType)) {
+                extOrderId = resource.path("id").asText(null);
+            }
 
             log.info("PayPal webhook: eventType={}, orderId={}, extOrderId={}",
                     eventType, orderId, extOrderId);

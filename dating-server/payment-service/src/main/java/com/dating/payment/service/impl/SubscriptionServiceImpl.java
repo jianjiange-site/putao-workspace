@@ -11,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -62,7 +64,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         if (!vo.isActive()) {
             return false;
         }
-        long now = Instant.now().getEpochSecond();
+        long now = Instant.now().toEpochMilli();
         return vo.getExpiresAt() > 0 && vo.getExpiresAt() < now;
     }
 
@@ -105,6 +107,9 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         // 不处理 FREE 档位
         if (tier <= SubscriptionTierConst.FREE) {
             log.debug("activateSubscription skip FREE tier: userId={}", userId);
+        // First delete closes the stale-cache window before the database write.
+        subscriptionCacheManager.evict(userId);
+
             return 0;
         }
 
@@ -144,8 +149,19 @@ public class SubscriptionServiceImpl implements SubscriptionService {
                     userId, entity.getTier(), entity.getExpiresAt());
         }
 
-        // 缓存失效，下次查询会回源
-        subscriptionCacheManager.evict(userId);
+        // Delete again only after the surrounding transaction commits. This also
+        // covers payment grant transactions in which this method participates.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            subscriptionCacheManager.evict(userId);
+                        }
+                    });
+        } else {
+            subscriptionCacheManager.evict(userId);
+        }
 
         return entity.getExpiresAt().toEpochMilli();
     }

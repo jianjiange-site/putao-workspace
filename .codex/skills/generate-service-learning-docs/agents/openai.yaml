@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generate Service Learning Docs"
+  short_description: "Generate four code-backed service learning documents"
+  default_prompt: "Use $generate-service-learning-docs to analyze this backend service and produce four coordinated Chinese learning documents."

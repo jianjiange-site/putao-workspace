@@ -5,7 +5,10 @@ import com.dating.payment.constant.PaymentChannel;
 import com.dating.payment.constant.PaymentErrorCode;
 import com.dating.payment.entity.PaymentOrderEntity;
 import com.dating.payment.exception.PaymentBizException;
+import com.dating.payment.executor.PayPalCaptureResult;
 import com.dating.payment.executor.PaypalExecutor;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.dating.payment.manager.PaymentOrderManager;
 import com.dating.payment.service.CoinService;
 import com.dating.payment.service.PaymentService;
@@ -39,6 +42,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final SubscriptionService subscriptionService;
     private final ProductInfoService productInfoService;
     private final PaypalExecutor paypalExecutor;
+    private final ObjectMapper objectMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -117,45 +121,35 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public VerifyPaymentVO verifyPayment(Long userId, String orderId, String extOrderId) {
-        // 1. 查询订单
-        PaymentOrderEntity order = orderManager.findByOrderId(orderId)
+        PaymentOrderEntity order = orderManager.findByOrderIdForUpdate(orderId)
                 .orElseThrow(() -> new PaymentBizException(PaymentErrorCode.ORDER_NOT_FOUND));
-
-        // 2. 已支付/已发奖直接返回
-        if (OrderStatus.PAID.equals(order.getStatus()) || OrderStatus.GRANTED.equals(order.getStatus())) {
-            VerifyPaymentVO vo = new VerifyPaymentVO();
-            vo.setOrderId(orderId);
-            vo.setStatus(order.getStatus());
-            return vo;
+        if (userId == null || !userId.equals(order.getUserId())) {
+            throw new PaymentBizException(PaymentErrorCode.ORDER_NOT_FOUND);
         }
 
-        // 3. PayPal 主动 capture
-        if (PaymentChannel.PAYPAL.equals(order.getPaymentChannel())) {
+        if (OrderStatus.PAID.equals(order.getStatus())) {
+            grantReward(orderId, "PayPal");
+        } else if (!OrderStatus.GRANTED.equals(order.getStatus())
+                && PaymentChannel.PAYPAL.equals(order.getPaymentChannel())) {
             try {
-                // 获取有效的外部订单 ID
-                String effectiveExtOrderId = extOrderId != null ? extOrderId : order.getExtTransactionId();
-                boolean captured = paypalExecutor.captureOrder(effectiveExtOrderId);
-
-                if (captured) {
-                    // 推进订单状态到 PAID
-                    advanceToPaid(orderId);
-                    // 发放奖励
-                    grantReward(orderId, "PayPal");
-                }
+                PayPalCaptureResult captured =
+                        paypalExecutor.captureOrder(order.getExtTransactionId());
+                validateCapture(order, captured);
+                advanceToPaid(orderId);
+                grantReward(orderId, "PayPal");
             } catch (PaymentBizException e) {
-                // 如果捕获失败，则推进订单状态到 FAILED
                 if (e.getCode() == PaymentErrorCode.PAYPAL_CAPTURE_FAILED) {
-                    // 推进订单状态到 FAILED
                     advanceToFailed(orderId, e.getMessage());
-                    // 抛出异常
                 }
                 throw e;
             }
         }
 
+        PaymentOrderEntity current = orderManager.findByOrderId(orderId)
+                .orElseThrow(() -> new PaymentBizException(PaymentErrorCode.ORDER_NOT_FOUND));
         VerifyPaymentVO vo = new VerifyPaymentVO();
         vo.setOrderId(orderId);
-        vo.setStatus(order.getStatus());
+        vo.setStatus(current.getStatus());
         return vo;
     }
 
@@ -164,25 +158,34 @@ public class PaymentServiceImpl implements PaymentService {
     public void handlePayPalWebhook(String payload, String eventType, String orderId, String extOrderId) {
         log.info("handlePayPalWebhook: eventType={}, orderId={}", eventType, orderId);
 
+        PaymentOrderEntity located = orderId == null
+                ? orderManager.findByExternalTransaction(PaymentChannel.PAYPAL, extOrderId)
+                    .orElseThrow(() -> new PaymentBizException(PaymentErrorCode.ORDER_NOT_FOUND))
+                : orderManager.findByOrderId(orderId)
+                    .orElseThrow(() -> new PaymentBizException(PaymentErrorCode.ORDER_NOT_FOUND));
+        PaymentOrderEntity order = orderManager.findByOrderIdForUpdate(located.getOrderId())
+                .orElseThrow(() -> new PaymentBizException(PaymentErrorCode.ORDER_NOT_FOUND));
+        validateWebhookOrder(payload, order, extOrderId);
+
         switch (eventType) {
-            // 捕获完成
             case "PAYMENT.CAPTURE.COMPLETED" -> {
-                // 推进订单状态到 PAID
-                advanceToPaid(orderId);
-                // 发放奖励
-                grantReward(orderId, "PayPal");
-            }
-            // 订单批准
-            case "CHECKOUT.ORDER.APPROVED" -> {
-                // 兜底自动 capture
-                // 如果外部订单 ID 不为空，则尝试捕获订单
-                try {
-                    paypalExecutor.captureOrder(extOrderId);
-                } catch (Exception e) {
-                    log.warn("Auto capture failed: extOrderId={}", extOrderId, e);
+                if (!OrderStatus.GRANTED.equals(order.getStatus())) {
+                    advanceToPaid(order.getOrderId());
+                    grantReward(order.getOrderId(), "PayPal");
                 }
             }
-            // 默认情况
+            case "CHECKOUT.ORDER.APPROVED" -> {
+                try {
+                    PayPalCaptureResult captured =
+                            paypalExecutor.captureOrder(order.getExtTransactionId());
+                    validateCapture(order, captured);
+                    advanceToPaid(order.getOrderId());
+                    grantReward(order.getOrderId(), "PayPal");
+                } catch (Exception e) {
+                    log.warn("Auto capture failed: extOrderId={}",
+                            order.getExtTransactionId(), e);
+                }
+            }
             default -> log.debug("Unhandled PayPal event: {}", eventType);
         }
     }
@@ -213,7 +216,8 @@ public class PaymentServiceImpl implements PaymentService {
      * 推进订单状态到 PAID.
      */
     private void advanceToPaid(String orderId) {
-        int updated = orderManager.updateStatus(orderId, OrderStatus.PAID);
+        int updated = orderManager.updateStatus(
+                orderId, OrderStatus.PAID, OrderStatus.INIT, OrderStatus.FAILED);
         if (updated > 0) {
             log.info("Order advanced to PAID: orderId={}", orderId);
         }
@@ -223,7 +227,7 @@ public class PaymentServiceImpl implements PaymentService {
      * 推进订单状态到 FAILED.
      */
     private void advanceToFailed(String orderId, String reason) {
-        orderManager.updateStatus(orderId, OrderStatus.FAILED);
+        orderManager.updateStatus(orderId, OrderStatus.FAILED, OrderStatus.INIT);
         log.warn("Order advanced to FAILED: orderId={}, reason={}", orderId, reason);
     }
 
@@ -231,25 +235,25 @@ public class PaymentServiceImpl implements PaymentService {
      * 发放奖励（幂等：GRANTED 状态直接跳过）.
      */
     private void grantReward(String orderId, String source) {
-        PaymentOrderEntity order = orderManager.findByOrderId(orderId).orElse(null);
+        PaymentOrderEntity order = orderManager.findByOrderIdForUpdate(orderId).orElse(null);
         if (order == null) {
             log.warn("grantReward order not found: {}", orderId);
             return;
         }
 
-        // 幂等锚点
-        // 如果订单状态为 GRANTED，则直接返回
         if (OrderStatus.GRANTED.equals(order.getStatus())) {
             log.info("grantReward already granted: orderId={}", orderId);
             return;
         }
+        if (!OrderStatus.PAID.equals(order.getStatus())) {
+            throw new PaymentBizException(500, "Order is not paid: " + orderId);
+        }
 
         // 获取商品
         ProductVO product = productInfoService.getProduct(order.getProductId());
-        // 如果商品不存在，则直接返回
         if (product == null) {
-            log.error("grantReward product not found: productId={}", order.getProductId());
-            return;
+            throw new PaymentBizException(PaymentErrorCode.PRODUCT_NOT_FOUND,
+                    "Product not found: " + order.getProductId());
         }
 
         Long userId = order.getUserId();
@@ -272,10 +276,62 @@ public class PaymentServiceImpl implements PaymentService {
                 "order:" + orderId);
 
         // 3. 标记 GRANTED
-        order.setStatus(OrderStatus.GRANTED);
-        orderManager.updateById(order);
+        int granted = orderManager.updateStatus(orderId, OrderStatus.GRANTED, OrderStatus.PAID);
+        if (granted != 1) {
+            throw new PaymentBizException(500, "Failed to finalize reward: " + orderId);
+        }
 
         log.info("grantReward completed: orderId={}, userId={}, coins={}",
                 orderId, userId, product.getCoins());
+    }
+
+    private void validateCapture(PaymentOrderEntity order, PayPalCaptureResult capture) {
+        if (!order.getExtTransactionId().equals(capture.extOrderId())) {
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "External order id mismatch");
+        }
+        if (!order.getOrderId().equals(capture.merchantOrderId())) {
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "Merchant order id mismatch");
+        }
+        if (order.getAmount().compareTo(capture.amount()) != 0) {
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "Captured amount mismatch");
+        }
+        if (!order.getCurrency().equalsIgnoreCase(capture.currency())) {
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_CAPTURE_FAILED,
+                    "Captured currency mismatch");
+        }
+    }
+
+    private void validateWebhookOrder(
+            String payload, PaymentOrderEntity order, String extOrderId) {
+        try {
+            if (extOrderId != null && !extOrderId.equals(order.getExtTransactionId())) {
+                throw new PaymentBizException(PaymentErrorCode.PAYPAL_WEBHOOK_HANDLER_FAILED,
+                        "Webhook external order id mismatch");
+            }
+            JsonNode resource = objectMapper.readTree(payload).path("resource");
+            String merchantOrderId = resource.path("custom_id").asText("");
+            if (!merchantOrderId.isBlank() && !merchantOrderId.equals(order.getOrderId())) {
+                throw new PaymentBizException(PaymentErrorCode.PAYPAL_WEBHOOK_HANDLER_FAILED,
+                        "Webhook merchant order id mismatch");
+            }
+            JsonNode amount = resource.path("amount");
+            if (!amount.isMissingNode() && amount.hasNonNull("value")) {
+                BigDecimal paidAmount = new BigDecimal(amount.path("value").asText());
+                String currency = amount.path("currency_code").asText();
+                if (order.getAmount().compareTo(paidAmount) != 0
+                        || !order.getCurrency().equalsIgnoreCase(currency)) {
+                    throw new PaymentBizException(PaymentErrorCode.PAYPAL_WEBHOOK_HANDLER_FAILED,
+                            "Webhook amount or currency mismatch");
+                }
+            }
+        } catch (PaymentBizException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new PaymentBizException(PaymentErrorCode.PAYPAL_WEBHOOK_HANDLER_FAILED,
+                    "Invalid PayPal webhook payload");
+        }
     }
 }
